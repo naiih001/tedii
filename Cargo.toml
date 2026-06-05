@@ -1,0 +1,17 @@
+[package]
+name = "tedii"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+ropey = "1.6"
+anyhow = "1.0"
+dirs = "5.0"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+tree-sitter = "0.25"
+libloading = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+
