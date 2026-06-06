@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use ropey::Rope;
 use ratatui::text::{Text, Line, Span};
 use ratatui::style::Style;
+use crate::git::{compute_diff, DiffHunk, GitRepo};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 
@@ -35,6 +36,15 @@ pub struct Editor {
     pub search_idx: usize,
     pub selection_anchor: Option<usize>,
     pub clipboard: String,
+    pub git_branch: Option<String>,
+    pub diff_hunks: Vec<DiffHunk>,
+    diff_base: Option<String>,
+    git_repo: Option<GitRepo>,
+    buffer_version: u64,
+    cached_text: String,
+    cached_highlights: Vec<(usize, usize, Style)>,
+    cached_highlight_version: u64,
+    cached_char_styles: Vec<Style>,
 }
 
 impl Editor {
@@ -45,6 +55,14 @@ impl Editor {
                 highlighter.load_language_for_path(path_str);
             }
         }
+        let (git_repo, git_branch, diff_base) = file_path
+            .and_then(|p| {
+                let repo = GitRepo::discover(p)?;
+                let branch = repo.current_branch();
+                let base = repo.diff_base(p).map(|b| String::from_utf8_lossy(&b).to_string());
+                Some((Some(repo), branch, base))
+            })
+            .unwrap_or((None, None, None));
         Self {
             buffer: Rope::from_str(text),
             cursor: 0,
@@ -64,6 +82,15 @@ impl Editor {
             search_idx: 0,
             selection_anchor: None,
             clipboard: String::new(),
+            git_branch,
+            diff_hunks: Vec::new(),
+            diff_base,
+            git_repo,
+            buffer_version: 0,
+            cached_text: text.to_string(),
+            cached_highlights: Vec::new(),
+            cached_highlight_version: 0,
+            cached_char_styles: Vec::new(),
         }
     }
 
@@ -169,12 +196,14 @@ impl Editor {
     pub fn insert_char(&mut self, c: char) {
         self.buffer.insert_char(self.cursor, c);
         self.cursor += 1;
+        self.buffer_version = self.buffer_version.wrapping_add(1);
     }
 
     pub fn delete_char(&mut self) {
         if self.cursor > 0 {
             self.buffer.remove(self.cursor - 1..self.cursor);
             self.cursor -= 1;
+            self.buffer_version = self.buffer_version.wrapping_add(1);
         }
     }
 
@@ -260,9 +289,25 @@ impl Editor {
         self.cursor = self.search_results[self.search_idx];
     }
 
+    pub fn refresh_diff(&mut self) {
+        if self.buffer_version != self.cached_highlight_version {
+            self.cached_text = self.buffer.to_string();
+        }
+        if let Some(ref base) = self.diff_base {
+            self.diff_hunks = compute_diff(base, &self.cached_text);
+        } else {
+            self.diff_hunks.clear();
+        }
+    }
+
+    pub fn git_repo(&self) -> Option<&GitRepo> {
+        self.git_repo.as_ref()
+    }
+
     pub fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
         let content = std::fs::read_to_string(path)?;
         self.buffer = Rope::from_str(&content);
+        self.buffer_version = self.buffer_version.wrapping_add(1);
         self.cursor = 0;
         self.scroll_x = 0;
         self.scroll_y = 0;
@@ -277,6 +322,16 @@ impl Editor {
         if let Some(path_str) = path.to_str() {
             self.highlighter.load_language_for_path(path_str);
         }
+        let repo = GitRepo::discover(path);
+        self.git_repo = repo;
+        self.git_branch = self.git_repo.as_ref().and_then(|r| r.current_branch());
+        self.diff_base = self
+            .git_repo
+            .as_ref()
+            .and_then(|r| r.diff_base(path))
+            .map(|b| String::from_utf8_lossy(&b).to_string());
+        self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.refresh_diff();
         Ok(())
     }
 
@@ -325,6 +380,7 @@ impl Editor {
                 self.clipboard = self.buffer.slice(start..end).to_string();
                 self.buffer.remove(start..end);
                 self.cursor = start;
+                self.buffer_version = self.buffer_version.wrapping_add(1);
             }
         }
         self.exit_visual_mode();
@@ -345,6 +401,7 @@ impl Editor {
         }
         self.buffer.insert(self.cursor, text);
         self.cursor += text.chars().count();
+        self.buffer_version = self.buffer_version.wrapping_add(1);
     }
 
     pub fn paste_clipboard(&mut self) {
@@ -362,14 +419,21 @@ impl Editor {
         }
     }
 
-    pub fn get_styled_text(&mut self) -> Text<'static> {
-        let text = self.buffer.to_string();
-        let lang = self.current_file.as_ref()
-            .and_then(|p| p.to_str())
-            .and_then(|p| self.highlighter.language_for_file(p))
-            .unwrap_or_default();
+    pub fn get_styled_text(&mut self, visible_start_line: usize, visible_height: usize) -> (Text<'static>, usize) {
+        const CONTEXT_LINES: usize = 50;
 
-        let highlights = self.highlighter.highlight(&text, &lang);
+        if self.buffer_version != self.cached_highlight_version {
+            self.cached_text = self.buffer.to_string();
+            let lang = self.current_file.as_ref()
+                .and_then(|p| p.to_str())
+                .and_then(|p| self.highlighter.language_for_file(p))
+                .unwrap_or_default();
+            self.cached_highlights = self.highlighter.highlight(&self.cached_text, &lang);
+            self.cached_highlight_version = self.buffer_version;
+        }
+
+        let text = &self.cached_text;
+        let highlights = &self.cached_highlights;
 
         let byte_to_char: Vec<usize> = {
             let mut map = Vec::with_capacity(text.len() + 1);
@@ -388,8 +452,26 @@ impl Editor {
 
         let chars: Vec<char> = text.chars().collect();
         let num_chars = chars.len();
-        let mut char_styles = vec![Style::default(); num_chars.max(1)];
-        for (start, end, style) in &highlights {
+
+        let search_active = self.search_active;
+        let search_hl_style = self.theme.ui_get("search_match");
+        let match_len = self.search_query.chars().count();
+        let search_results: Vec<usize> = self.search_results.clone();
+
+        let sel_range = self.get_selection_range();
+        let sel_style = self.theme.ui_get("visual_selection");
+
+        let line_count = self.buffer.len_lines();
+        let context_start = visible_start_line.saturating_sub(CONTEXT_LINES);
+        let visible_end_line = (visible_start_line + visible_height).min(line_count);
+        let context_start_char = self.buffer.line_to_char(context_start);
+        let visible_end_char = self.buffer.line_to_char(visible_end_line);
+
+        self.cached_char_styles.clear();
+        self.cached_char_styles.resize(num_chars.max(1), Style::default());
+        let char_styles = &mut self.cached_char_styles;
+
+        for (start, end, style) in highlights {
             let sci = byte_to_char.get(*start).copied().unwrap_or(0).min(num_chars);
             let eci = byte_to_char.get(*end).copied().unwrap_or(num_chars).min(num_chars);
             for ci in sci..eci {
@@ -397,19 +479,16 @@ impl Editor {
             }
         }
 
-        if self.search_active {
-            let hl_style = self.theme.ui_get("search_match");
-            let match_len = self.search_query.chars().count();
-            for &start in &self.search_results {
+        if search_active {
+            for &start in &search_results {
                 let end = (start + match_len).min(num_chars);
                 for ci in start..end {
-                    char_styles[ci] = hl_style;
+                    char_styles[ci] = search_hl_style;
                 }
             }
         }
 
-        if let Some((sel_start, sel_end)) = self.get_selection_range() {
-            let sel_style = self.theme.ui_get("visual_selection");
+        if let Some((sel_start, sel_end)) = sel_range {
             for ci in sel_start..sel_end {
                 char_styles[ci] = sel_style;
             }
@@ -417,9 +496,9 @@ impl Editor {
 
         let mut lines: Vec<Line> = Vec::new();
         let mut spans: Vec<Span> = Vec::new();
-        let mut seg_start = 0;
+        let mut seg_start = context_start_char;
 
-        for i in 0..num_chars {
+        for i in context_start_char..visible_end_char {
             if chars[i] == '\n' {
                 if i > seg_start {
                     let s: String = chars[seg_start..i].iter().collect();
@@ -434,15 +513,15 @@ impl Editor {
             }
         }
 
-        if seg_start < num_chars {
-            let s: String = chars[seg_start..].iter().collect();
+        if seg_start < visible_end_char {
+            let s: String = chars[seg_start..visible_end_char].iter().collect();
             spans.push(Span::styled(s, char_styles[seg_start]));
         }
         if !spans.is_empty() {
             lines.push(Line::from(spans));
         }
 
-        Text::from(lines)
+        (Text::from(lines), context_start)
     }
 
     pub fn get_gutter_width(&self) -> usize {

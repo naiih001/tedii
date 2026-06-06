@@ -2,6 +2,8 @@ mod config;
 mod editor;
 mod file_explorer;
 mod fuzzy_finder;
+mod git;
+mod git_picker;
 mod grammar_commands;
 mod syntax;
 mod theme;
@@ -17,6 +19,8 @@ use crossterm::{
 use editor::{Editor, Mode};
 use file_explorer::FileExplorer;
 use fuzzy_finder::FuzzyFinder;
+use git::{DiffKind, GitRepo};
+use git_picker::GitPicker;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     text::{Line, Span},
@@ -96,7 +100,18 @@ fn main() -> Result<()> {
     let mut editor = Editor::new(&file_content, file_path.as_deref(), theme.clone());
 
     let mut file_explorer = FileExplorer::new(theme.clone());
-    let mut fuzzy_finder = FuzzyFinder::new(theme);
+    let mut fuzzy_finder = FuzzyFinder::new(theme.clone());
+    let mut git_picker = GitPicker::new(theme);
+
+    fn refresh_git(git_picker: &mut GitPicker) {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(repo) = GitRepo::discover(&cwd) {
+                let changes = repo.status();
+                git_picker.set_entries(changes);
+            }
+        }
+    }
+
     if let Some(dir) = start_dir {
         file_explorer.set_dir(dir.clone());
         fuzzy_finder.set_dir(dir);
@@ -123,45 +138,73 @@ fn main() -> Result<()> {
 
             let editor_area = chunks[0];
 
+            let diff_width = 1u16;
             let gutter_width = editor.get_gutter_width() + 1;
             let editor_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
+                    Constraint::Length(diff_width),
                     Constraint::Length(gutter_width as u16),
                     Constraint::Min(1),
                 ])
                 .split(editor_area);
 
-            let gutter_area = editor_chunks[0];
-            let content_area = editor_chunks[1];
+            let diff_area = editor_chunks[0];
+            let gutter_area = editor_chunks[1];
+            let content_area = editor_chunks[2];
 
             let viewport_width = content_area.width as usize;
             let viewport_height = content_area.height as usize;
 
             editor.update_scroll(viewport_width, viewport_height);
+            editor.refresh_diff();
 
             let scroll_y = editor.scroll_y;
             let scroll_x = editor.scroll_x;
 
             let line_count = editor.buffer.len_lines();
-            let mut line_numbers = Vec::new();
-            for i in 0..line_count {
+            let visible_end = (scroll_y + viewport_height).min(line_count);
+
+            let mut diff_markers = Vec::new();
+            for i in scroll_y..visible_end {
                 let style = if i == editor.buffer.char_to_line(editor.cursor) {
                     editor.theme.ui_get("gutter_current_line")
                 } else {
                     editor.theme.ui_get("gutter_line")
                 };
-                line_numbers.push(Line::from(vec![Span::styled(format!("{:>width$} ", i + 1, width = gutter_width - 1), style)]));
+                let (marker, diff_style) = editor
+                    .diff_hunks
+                    .iter()
+                    .find(|h| h.line == i as u32)
+                    .map(|h| match h.kind {
+                        DiffKind::Added => ("+", editor.theme.ui_get("gutter_diff_added")),
+                        DiffKind::Removed => ("-", editor.theme.ui_get("gutter_diff_deleted")),
+                        DiffKind::Modified => ("~", editor.theme.ui_get("gutter_diff_modified")),
+                    })
+                    .unwrap_or((" ", style));
+                diff_markers.push(Line::from(vec![Span::styled(marker, diff_style)]));
             }
-            
+
+            let mut line_numbers = Vec::new();
+            for i in scroll_y..visible_end {
+                let style = if i == editor.buffer.char_to_line(editor.cursor) {
+                    editor.theme.ui_get("gutter_current_line")
+                } else {
+                    editor.theme.ui_get("gutter_line")
+                };
+                line_numbers.push(Line::from(vec![Span::styled(format!("{:>width$} ", i + 1, width = gutter_width as usize - 1), style)]));
+            }
+
+            let diff_widget = Paragraph::new(diff_markers);
             let gutter_widget = Paragraph::new(line_numbers)
-                .alignment(Alignment::Right)
-                .scroll((scroll_y as u16, 0));
+                .alignment(Alignment::Right);
 
-            let text_widget = Paragraph::new(editor.get_styled_text())
+            let (styled_text, context_start) = editor.get_styled_text(scroll_y, viewport_height);
+            let text_widget = Paragraph::new(styled_text)
                 .style(editor.theme.ui_get("editor_bg"))
-                .scroll((scroll_y as u16, scroll_x as u16));
+                .scroll(((scroll_y - context_start) as u16, scroll_x as u16));
 
+            f.render_widget(diff_widget, diff_area);
             f.render_widget(gutter_widget, gutter_area);
             f.render_widget(text_widget, content_area);
 
@@ -186,11 +229,16 @@ fn main() -> Result<()> {
                 .as_ref()
                 .and_then(|p| p.to_str())
                 .unwrap_or("Untitled");
-            let left_text = Line::from(vec![
-                mode_span,
-                Span::raw(" "),
-                Span::styled(filename, editor.theme.ui_get("status_bar_filename")),
-            ]);
+            let mut left_spans = vec![mode_span, Span::raw(" ")];
+            if let Some(ref branch) = editor.git_branch {
+                left_spans.push(Span::styled(
+                    format!(" {} ", branch),
+                    editor.theme.ui_get("status_bar_branch"),
+                ));
+                left_spans.push(Span::raw(" "));
+            }
+            left_spans.push(Span::styled(filename, editor.theme.ui_get("status_bar_filename")));
+            let left_text = Line::from(left_spans);
             let right_text = Line::from(vec![
                 Span::styled(format!(" {}:{} ", line_idx + 1, col_idx + 1), editor.theme.ui_get("status_bar_cursor_pos")),
             ]);
@@ -200,8 +248,9 @@ fn main() -> Result<()> {
 
             file_explorer.render(f, area);
             fuzzy_finder.render(f, area);
+            git_picker.render(f, area);
 
-            if !file_explorer.visible && !fuzzy_finder.visible {
+            if !file_explorer.visible && !fuzzy_finder.visible && !git_picker.visible {
                 f.set_cursor_position((
                     content_area.x + (col_idx - editor.scroll_x) as u16,
                     content_area.y + (line_idx - editor.scroll_y) as u16,
@@ -228,6 +277,25 @@ fn main() -> Result<()> {
                         KeyCode::Up | KeyCode::BackTab => file_explorer.navigate_up(),
                         KeyCode::Down | KeyCode::Tab => file_explorer.navigate_down(),
                         KeyCode::Char(c) => file_explorer.add_filter_char(c),
+                        _ => {}
+                    }
+                } else if git_picker.visible {
+                    match key.code {
+                        KeyCode::Esc => {
+                            git_picker.visible = false;
+                            editor.mode = Mode::Normal;
+                        }
+                        KeyCode::Enter => {
+                            if let Some(path) = git_picker.enter() {
+                                if let Err(e) = editor.open_file(&path) {
+                                    eprintln!("Error opening file: {}", e);
+                                }
+                                git_picker.visible = false;
+                                editor.mode = Mode::Normal;
+                            }
+                        }
+                        KeyCode::Up | KeyCode::BackTab => git_picker.navigate_up(),
+                        KeyCode::Down | KeyCode::Tab => git_picker.navigate_down(),
                         _ => {}
                     }
                 } else if fuzzy_finder.visible {
@@ -282,6 +350,15 @@ fn main() -> Result<()> {
                                         file_explorer.visible = false;
                                         fuzzy_finder.toggle();
                                         editor.mode = Mode::Fuzzy;
+                                    }
+                                    KeyCode::Char('g') => {
+                                        file_explorer.visible = false;
+                                        fuzzy_finder.visible = false;
+                                        refresh_git(&mut git_picker);
+                                        if !git_picker.is_empty() {
+                                            git_picker.visible = true;
+                                            editor.mode = Mode::Fuzzy;
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -353,6 +430,14 @@ fn main() -> Result<()> {
                             KeyCode::Enter => {
                                 match editor.command_buffer.as_str() {
                                     "q" => editor.should_quit = true,
+                                    "git" => {
+                                        refresh_git(&mut git_picker);
+                                        if !git_picker.is_empty() {
+                                            git_picker.visible = true;
+                                            editor.mode = Mode::Fuzzy;
+                                        }
+                                        editor.mode = Mode::Normal;
+                                    }
                                     "w" => {
                                         let _ = editor.save();
                                         editor.mode = Mode::Normal;

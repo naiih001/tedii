@@ -55,6 +55,19 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("fuzzy_match", Color::Yellow, Color::Reset),
         ("search_match", Color::Yellow, Color::Reset),
         ("visual_selection", Color::White, Color::Rgb(40, 40, 140)),
+        ("status_bar_branch", Color::Cyan, Color::Reset),
+        ("gutter_diff_added", Color::Green, Color::Rgb(30, 30, 30)),
+        ("gutter_diff_modified", Color::Yellow, Color::Rgb(30, 30, 30)),
+        ("gutter_diff_deleted", Color::Red, Color::Rgb(30, 30, 30)),
+        ("git_border", Color::White, Color::Reset),
+        ("git_query", Color::Cyan, Color::Reset),
+        ("git_selected", Color::Black, Color::Gray),
+        ("git_status_modified", Color::Yellow, Color::Reset),
+        ("git_status_added", Color::Green, Color::Reset),
+        ("git_status_deleted", Color::Red, Color::Reset),
+        ("git_status_untracked", Color::DarkGray, Color::Reset),
+        ("git_status_conflict", Color::LightRed, Color::Reset),
+        ("git_status_renamed", Color::Cyan, Color::Reset),
     ]
 }
 
