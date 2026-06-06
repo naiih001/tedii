@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
+use crate::theme::Theme;
 
 #[derive(Clone)]
 pub struct ScoredEntry {
@@ -26,10 +27,11 @@ pub struct FuzzyFinder {
     selection: usize,
     query: String,
     scroll: usize,
+    theme: Theme,
 }
 
 impl FuzzyFinder {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             visible: false,
@@ -40,6 +42,7 @@ impl FuzzyFinder {
             selection: 0,
             query: String::new(),
             scroll: 0,
+            theme,
         }
     }
 
@@ -174,7 +177,7 @@ impl FuzzyFinder {
         let block = Block::bordered()
             .title(" Fuzzy Finder ")
             .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(Color::White));
+            .border_style(self.theme.ui_get("fuzzy_border"));
         let inner = block.inner(popup_area);
         f.render_widget(block, popup_area);
 
@@ -198,7 +201,7 @@ impl FuzzyFinder {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 query_text,
-                Style::default().fg(Color::Cyan),
+                self.theme.ui_get("fuzzy_query"),
             ))),
             query_area,
         );
@@ -216,9 +219,9 @@ impl FuzzyFinder {
             let suffix = if entry.is_dir { "/" } else { "" };
 
             let base_style = if selected {
-                Style::default().fg(Color::Black).bg(Color::Gray)
+                self.theme.ui_get("fuzzy_selected")
             } else if entry.is_dir {
-                Style::default().fg(Color::Cyan)
+                self.theme.ui_get("fuzzy_dir")
             } else {
                 Style::default()
             };
@@ -243,7 +246,7 @@ impl FuzzyFinder {
                     }
                     spans.push(Span::styled(
                         display_chars[mi].to_string(),
-                        base_style.fg(Color::Yellow),
+                        self.theme.ui_get("fuzzy_match"),
                     ));
                     last = mi + 1;
                 }
