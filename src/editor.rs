@@ -11,12 +11,13 @@ pub enum Mode {
     Normal,
     Insert,
     Command,
+    Search,
     Fuzzy,
 }
 
 pub struct Editor {
     pub buffer: Rope,
-    pub cursor: usize, // Char index in Rope
+    pub cursor: usize,
     pub scroll_x: usize,
     pub scroll_y: usize,
     pub mode: Mode,
@@ -27,6 +28,10 @@ pub struct Editor {
     pub current_file: Option<PathBuf>,
     pub highlighter: SyntaxHighlighter,
     pub theme: Theme,
+    pub search_query: String,
+    pub search_results: Vec<usize>,
+    pub search_active: bool,
+    pub search_idx: usize,
 }
 
 impl Editor {
@@ -50,6 +55,10 @@ impl Editor {
             current_file: file_path.map(|p| p.to_path_buf()),
             highlighter,
             theme,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_active: false,
+            search_idx: 0,
         }
     }
 
@@ -164,6 +173,87 @@ impl Editor {
         }
     }
 
+    pub fn perform_search(&mut self) {
+        self.search_results.clear();
+        self.search_active = false;
+        if self.search_query.is_empty() {
+            return;
+        }
+
+        let text = self.buffer.to_string();
+        let text_lower = text.to_lowercase();
+        let query_lower = self.search_query.to_lowercase();
+
+        let byte_to_char: Vec<usize> = {
+            let mut map = Vec::with_capacity(text.len() + 1);
+            let mut ci = 0;
+            for (bi, _) in text.char_indices() {
+                while map.len() <= bi {
+                    map.push(ci);
+                }
+                ci += 1;
+            }
+            while map.len() <= text.len() {
+                map.push(ci);
+            }
+            map
+        };
+
+        let mut pos = 0;
+        while let Some(byte_start) = text_lower[pos..].find(&query_lower) {
+            let abs_byte = pos + byte_start;
+            let ci = byte_to_char.get(abs_byte).copied().unwrap_or(0);
+            self.search_results.push(ci);
+            pos = abs_byte + query_lower.len();
+            if pos >= text.len() {
+                break;
+            }
+        }
+
+        if self.search_results.is_empty() {
+            return;
+        }
+
+        self.search_active = true;
+        self.search_idx = 0;
+
+        let num_chars = text.chars().count();
+        if num_chars == 0 {
+            return;
+        }
+
+        for (i, &ci) in self.search_results.iter().enumerate() {
+            if ci >= self.cursor {
+                self.search_idx = i;
+                self.cursor = ci;
+                return;
+            }
+        }
+
+        self.search_idx = 0;
+        self.cursor = self.search_results[0];
+    }
+
+    pub fn next_match(&mut self) {
+        if !self.search_active || self.search_results.is_empty() {
+            return;
+        }
+        self.search_idx = (self.search_idx + 1) % self.search_results.len();
+        self.cursor = self.search_results[self.search_idx];
+    }
+
+    pub fn prev_match(&mut self) {
+        if !self.search_active || self.search_results.is_empty() {
+            return;
+        }
+        self.search_idx = if self.search_idx == 0 {
+            self.search_results.len() - 1
+        } else {
+            self.search_idx - 1
+        };
+        self.cursor = self.search_results[self.search_idx];
+    }
+
     pub fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
         let content = std::fs::read_to_string(path)?;
         self.buffer = Rope::from_str(&content);
@@ -174,6 +264,9 @@ impl Editor {
         self.mode = Mode::Normal;
         self.pending_g = false;
         self.pending_space = false;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.search_active = false;
         if let Some(path_str) = path.to_str() {
             self.highlighter.load_language_for_path(path_str);
         }
@@ -188,10 +281,6 @@ impl Editor {
             .unwrap_or_default();
 
         let highlights = self.highlighter.highlight(&text, &lang);
-
-        if highlights.is_empty() {
-            return Text::from(text);
-        }
 
         let byte_to_char: Vec<usize> = {
             let mut map = Vec::with_capacity(text.len() + 1);
@@ -216,6 +305,17 @@ impl Editor {
             let eci = byte_to_char.get(*end).copied().unwrap_or(num_chars).min(num_chars);
             for ci in sci..eci {
                 char_styles[ci] = *style;
+            }
+        }
+
+        if self.search_active {
+            let hl_style = self.theme.ui_get("search_match");
+            let match_len = self.search_query.chars().count();
+            for &start in &self.search_results {
+                let end = (start + match_len).min(num_chars);
+                for ci in start..end {
+                    char_styles[ci] = hl_style;
+                }
             }
         }
 
@@ -258,14 +358,12 @@ impl Editor {
         let line_idx = self.buffer.char_to_line(self.cursor);
         let col_idx = self.cursor - self.buffer.line_to_char(line_idx);
 
-        // Vertical scroll
         if line_idx < self.scroll_y {
             self.scroll_y = line_idx;
         } else if height > 0 && line_idx >= self.scroll_y + height {
             self.scroll_y = line_idx - height + 1;
         }
 
-        // Horizontal scroll
         if col_idx < self.scroll_x {
             self.scroll_x = col_idx;
         } else if width > 0 && col_idx >= self.scroll_x + width {

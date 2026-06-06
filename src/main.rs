@@ -32,7 +32,6 @@ fn main() -> Result<()> {
     let mut file_path: Option<PathBuf> = None;
     let mut start_dir: Option<PathBuf> = None;
 
-    // Handle CLI commands before entering TUI
     if args.len() > 1 {
         match args[1].as_str() {
             "--init" => {
@@ -117,8 +116,8 @@ fn main() -> Result<()> {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Min(1),    // Editor
-                    Constraint::Length(1), // Status + Mode
+                    Constraint::Min(1),
+                    Constraint::Length(1),
                 ])
                 .split(area);
 
@@ -136,7 +135,6 @@ fn main() -> Result<()> {
             let gutter_area = editor_chunks[0];
             let content_area = editor_chunks[1];
 
-            // Viewport size inside the border
             let viewport_width = content_area.width as usize;
             let viewport_height = content_area.height as usize;
 
@@ -161,6 +159,7 @@ fn main() -> Result<()> {
                 .scroll((scroll_y as u16, 0));
 
             let text_widget = Paragraph::new(editor.get_styled_text())
+                .style(editor.theme.ui_get("editor_bg"))
                 .scroll((scroll_y as u16, scroll_x as u16));
 
             f.render_widget(gutter_widget, gutter_area);
@@ -178,6 +177,7 @@ fn main() -> Result<()> {
                 Mode::Normal => Span::styled(" NORMAL ", editor.theme.ui_get("mode_normal")),
                 Mode::Insert => Span::styled(" INSERT ", editor.theme.ui_get("mode_insert")),
                 Mode::Command => Span::styled(format!(" COMMAND :{} ", editor.command_buffer), editor.theme.ui_get("mode_command")),
+                Mode::Search => Span::styled(format!(" SEARCH /{}/ ", editor.search_query), editor.theme.ui_get("mode_command")),
                 Mode::Fuzzy => Span::styled(" FUZZY ", editor.theme.ui_get("mode_fuzzy")),
             };
 
@@ -286,6 +286,16 @@ fn main() -> Result<()> {
                                 }
                             } else {
                                 match key.code {
+                                    KeyCode::Char('/') => {
+                                        editor.mode = Mode::Search;
+                                        editor.search_query.clear();
+                                    }
+                                    KeyCode::Char('n') => {
+                                        if editor.search_active { editor.next_match(); }
+                                    }
+                                    KeyCode::Char('N') => {
+                                        if editor.search_active { editor.prev_match(); }
+                                    }
                                     KeyCode::Char(':') => {
                                         editor.mode = Mode::Command;
                                         editor.command_buffer.clear();
@@ -327,6 +337,21 @@ fn main() -> Result<()> {
                             KeyCode::Char(c) => editor.command_buffer.push(c),
                             KeyCode::Backspace => {
                                 editor.command_buffer.pop();
+                            }
+                            _ => {}
+                        },
+                        Mode::Search => match key.code {
+                            KeyCode::Esc => {
+                                editor.mode = Mode::Normal;
+                                editor.search_query.clear();
+                            }
+                            KeyCode::Enter => {
+                                editor.perform_search();
+                                editor.mode = Mode::Normal;
+                            }
+                            KeyCode::Char(c) => editor.search_query.push(c),
+                            KeyCode::Backspace => {
+                                editor.search_query.pop();
                             }
                             _ => {}
                         },

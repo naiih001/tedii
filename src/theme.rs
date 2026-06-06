@@ -52,6 +52,7 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("fuzzy_selected", Color::Black, Color::Gray),
         ("fuzzy_dir", Color::Cyan, Color::Reset),
         ("fuzzy_match", Color::Yellow, Color::Reset),
+        ("search_match", Color::Yellow, Color::Reset),
     ]
 }
 
