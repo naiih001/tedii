@@ -13,6 +13,7 @@ pub enum Mode {
     Command,
     Search,
     Fuzzy,
+    Visual,
 }
 
 pub struct Editor {
@@ -32,6 +33,8 @@ pub struct Editor {
     pub search_results: Vec<usize>,
     pub search_active: bool,
     pub search_idx: usize,
+    pub selection_anchor: Option<usize>,
+    pub clipboard: String,
 }
 
 impl Editor {
@@ -59,6 +62,8 @@ impl Editor {
             search_results: Vec::new(),
             search_active: false,
             search_idx: 0,
+            selection_anchor: None,
+            clipboard: String::new(),
         }
     }
 
@@ -176,6 +181,7 @@ impl Editor {
     pub fn perform_search(&mut self) {
         self.search_results.clear();
         self.search_active = false;
+        self.selection_anchor = None;
         if self.search_query.is_empty() {
             return;
         }
@@ -264,6 +270,7 @@ impl Editor {
         self.mode = Mode::Normal;
         self.pending_g = false;
         self.pending_space = false;
+        self.selection_anchor = None;
         self.search_query.clear();
         self.search_results.clear();
         self.search_active = false;
@@ -271,6 +278,56 @@ impl Editor {
             self.highlighter.load_language_for_path(path_str);
         }
         Ok(())
+    }
+
+    pub fn enter_visual_mode(&mut self) {
+        self.selection_anchor = Some(self.cursor);
+    }
+
+    pub fn exit_visual_mode(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    pub fn get_selection_range(&self) -> Option<(usize, usize)> {
+        self.selection_anchor.map(|anchor| {
+            let start = anchor.min(self.cursor);
+            let end = anchor.max(self.cursor);
+            (start, end)
+        })
+    }
+
+    fn get_selected_text(&self) -> Option<String> {
+        self.get_selection_range().map(|(start, end)| {
+            self.buffer.slice(start..end).to_string()
+        })
+    }
+
+    pub fn yank_selection(&mut self) {
+        if let Some(text) = self.get_selected_text() {
+            self.clipboard = text;
+        }
+        self.exit_visual_mode();
+    }
+
+    pub fn yank_selection_system(&mut self) {
+        if let Some(text) = self.get_selected_text() {
+            self.clipboard = text.clone();
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(text);
+            }
+        }
+        self.exit_visual_mode();
+    }
+
+    pub fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection_range() {
+            if start < end {
+                self.clipboard = self.buffer.slice(start..end).to_string();
+                self.buffer.remove(start..end);
+                self.cursor = start;
+            }
+        }
+        self.exit_visual_mode();
     }
 
     pub fn get_styled_text(&mut self) -> Text<'static> {
@@ -316,6 +373,13 @@ impl Editor {
                 for ci in start..end {
                     char_styles[ci] = hl_style;
                 }
+            }
+        }
+
+        if let Some((sel_start, sel_end)) = self.get_selection_range() {
+            let sel_style = self.theme.ui_get("visual_selection");
+            for ci in sel_start..sel_end {
+                char_styles[ci] = sel_style;
             }
         }
 
