@@ -180,6 +180,72 @@ impl Editor {
         self.cursor = self.buffer.line_to_char(line_idx);
     }
 
+    pub fn move_word_forward(&mut self) {
+        let len = self.buffer.len_chars();
+        if len == 0 || self.cursor >= len {
+            return;
+        }
+
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut i = self.cursor;
+
+        let cur = self.buffer.char(i);
+
+        if cur.is_whitespace() {
+            while i < len && self.buffer.char(i).is_whitespace() {
+                i += 1;
+            }
+        } else if is_word(cur) {
+            while i < len && is_word(self.buffer.char(i)) {
+                i += 1;
+            }
+        } else {
+            while i < len && !self.buffer.char(i).is_whitespace() && !is_word(self.buffer.char(i)) {
+                i += 1;
+            }
+        }
+
+        while i < len && self.buffer.char(i).is_whitespace() {
+            i += 1;
+        }
+
+        if i < len {
+            self.cursor = i;
+        }
+    }
+
+    pub fn move_word_backward(&mut self) {
+        let len = self.buffer.len_chars();
+        if len == 0 || self.cursor == 0 {
+            return;
+        }
+
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut i = self.cursor.min(len - 1);
+
+        while i > 0 && self.buffer.char(i - 1).is_whitespace() {
+            i -= 1;
+        }
+
+        if i == 0 {
+            self.cursor = 0;
+            return;
+        }
+
+        let cur = self.buffer.char(i - 1);
+        if is_word(cur) {
+            while i > 0 && is_word(self.buffer.char(i - 1)) {
+                i -= 1;
+            }
+        } else {
+            while i > 0 && !self.buffer.char(i - 1).is_whitespace() && !is_word(self.buffer.char(i - 1)) {
+                i -= 1;
+            }
+        }
+
+        self.cursor = i;
+    }
+
     pub fn move_to_line_end(&mut self) {
         let line_idx = self.buffer.char_to_line(self.cursor);
         let line = self.buffer.line(line_idx);

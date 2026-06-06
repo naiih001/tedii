@@ -394,11 +394,6 @@ fn main() -> Result<()> {
                                     KeyCode::Char('o') => {
                                         editor.move_to_line_end();
                                         editor.insert_char('\n');
-                                        editor.mode = Mode::Insert;
-                                    }
-                                    KeyCode::Char('O') => {
-                                        editor.move_to_line_start();
-                                        editor.insert_char('\n');
                                         editor.move_up();
                                         editor.mode = Mode::Insert;
                                     }
@@ -406,6 +401,8 @@ fn main() -> Result<()> {
                                     KeyCode::Char('j') => editor.move_down(),
                                     KeyCode::Char('k') => editor.move_up(),
                                     KeyCode::Char('l') => editor.move_right(),
+                                    KeyCode::Char('w') => editor.move_word_forward(),
+                                    KeyCode::Char('b') => editor.move_word_backward(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char(' ') => editor.pending_space = true,
                                     KeyCode::Char('v') => {
@@ -501,6 +498,8 @@ fn main() -> Result<()> {
                                     KeyCode::Char('j') => editor.move_down(),
                                     KeyCode::Char('k') => editor.move_up(),
                                     KeyCode::Char('l') => editor.move_right(),
+                                    KeyCode::Char('w') => editor.move_word_forward(),
+                                    KeyCode::Char('b') => editor.move_word_backward(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char('y') => {
                                         editor.yank_selection();
