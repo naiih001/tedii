@@ -330,6 +330,38 @@ impl Editor {
         self.exit_visual_mode();
     }
 
+    fn paste_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if text.ends_with('\n') {
+            let line_idx = self.buffer.char_to_line(self.cursor);
+            let next_line = line_idx + 1;
+            if next_line < self.buffer.len_lines() {
+                self.cursor = self.buffer.line_to_char(next_line);
+            } else {
+                self.cursor = self.buffer.len_chars();
+            }
+        }
+        self.buffer.insert(self.cursor, text);
+        self.cursor += text.chars().count();
+    }
+
+    pub fn paste_clipboard(&mut self) {
+        let text = self.clipboard.clone();
+        self.paste_text(&text);
+    }
+
+    pub fn paste_system_clipboard(&mut self) {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                let text = text.to_string();
+                self.clipboard = text.clone();
+                self.paste_text(&text);
+            }
+        }
+    }
+
     pub fn get_styled_text(&mut self) -> Text<'static> {
         let text = self.buffer.to_string();
         let lang = self.current_file.as_ref()
