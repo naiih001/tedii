@@ -259,6 +259,53 @@ impl Editor {
         }
     }
 
+    pub fn select_line(&mut self) {
+        let len = self.buffer.len_chars();
+        if len == 0 {
+            return;
+        }
+
+        let line_idx = self.buffer.char_to_line(self.cursor);
+        let line = self.buffer.line(line_idx);
+        let line_len = line.len_chars();
+        let line_start = self.buffer.line_to_char(line_idx);
+
+        self.selection_anchor = Some(line_start);
+        self.cursor = (line_start + line_len).min(len);
+    }
+
+    pub fn extend_selection_down(&mut self) {
+        let len = self.buffer.len_chars();
+        if len == 0 {
+            return;
+        }
+        let line_idx = self.buffer.char_to_line(self.cursor);
+        let next_line = line_idx + 1;
+        if next_line >= self.buffer.len_lines() {
+            return;
+        }
+        let next = self.buffer.line(next_line);
+        let next_len = next.len_chars();
+        let next_start = self.buffer.line_to_char(next_line);
+        self.cursor = (next_start + next_len).min(len);
+    }
+
+    pub fn extend_selection_up(&mut self) {
+        let len = self.buffer.len_chars();
+        if len == 0 {
+            return;
+        }
+        let line_idx = self.buffer.char_to_line(self.cursor);
+        if line_idx == 0 {
+            return;
+        }
+        let prev_line = line_idx - 1;
+        let prev = self.buffer.line(prev_line);
+        let prev_len = prev.len_chars();
+        let prev_start = self.buffer.line_to_char(prev_line);
+        self.cursor = (prev_start + prev_len).min(len);
+    }
+
     pub fn insert_char(&mut self, c: char) {
         self.buffer.insert_char(self.cursor, c);
         self.cursor += 1;

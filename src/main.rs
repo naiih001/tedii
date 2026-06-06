@@ -409,6 +409,10 @@ fn main() -> Result<()> {
                                         editor.enter_visual_mode();
                                         editor.mode = Mode::Visual;
                                     }
+                                    KeyCode::Char('x') => {
+                                        editor.select_line();
+                                        editor.mode = Mode::Visual;
+                                    }
                                     KeyCode::Char('p') => editor.paste_clipboard(),
                                     KeyCode::Char('P') => editor.paste_system_clipboard(),
                                     _ => {}
@@ -500,6 +504,8 @@ fn main() -> Result<()> {
                                     KeyCode::Char('l') => editor.move_right(),
                                     KeyCode::Char('w') => editor.move_word_forward(),
                                     KeyCode::Char('b') => editor.move_word_backward(),
+                                    KeyCode::Char('x') => editor.extend_selection_down(),
+                                    KeyCode::Char('X') => editor.extend_selection_up(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char('y') => {
                                         editor.yank_selection();
