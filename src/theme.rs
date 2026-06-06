@@ -39,6 +39,7 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("mode_insert", Color::White, Color::Rgb(0, 100, 0)),
         ("mode_command", Color::Black, Color::Rgb(200, 200, 0)),
         ("mode_fuzzy", Color::White, Color::Rgb(150, 0, 150)),
+        ("mode_visual", Color::White, Color::Rgb(100, 0, 100)),
         ("status_bar_filename", Color::Yellow, Color::Reset),
         ("status_bar_cursor_pos", Color::White, Color::Rgb(0, 100, 100)),
         ("gutter_current_line", Color::Yellow, Color::Rgb(30, 30, 30)),
@@ -53,6 +54,7 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("fuzzy_dir", Color::Cyan, Color::Reset),
         ("fuzzy_match", Color::Yellow, Color::Reset),
         ("search_match", Color::Yellow, Color::Reset),
+        ("visual_selection", Color::White, Color::Rgb(40, 40, 140)),
     ]
 }
 

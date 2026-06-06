@@ -105,7 +105,7 @@ fn main() -> Result<()> {
 
     while !editor.should_quit {
         let cursor_style = match editor.mode {
-            Mode::Normal => SetCursorStyle::SteadyBlock,
+            Mode::Normal | Mode::Visual => SetCursorStyle::SteadyBlock,
             Mode::Insert => SetCursorStyle::SteadyBar,
             _ => SetCursorStyle::SteadyBlock,
         };
@@ -179,6 +179,7 @@ fn main() -> Result<()> {
                 Mode::Command => Span::styled(format!(" COMMAND :{} ", editor.command_buffer), editor.theme.ui_get("mode_command")),
                 Mode::Search => Span::styled(format!(" SEARCH /{}/ ", editor.search_query), editor.theme.ui_get("mode_command")),
                 Mode::Fuzzy => Span::styled(" FUZZY ", editor.theme.ui_get("mode_fuzzy")),
+                Mode::Visual => Span::styled(" VISUAL ", editor.theme.ui_get("mode_visual")),
             };
 
             let filename = editor.current_file
@@ -330,6 +331,10 @@ fn main() -> Result<()> {
                                     KeyCode::Char('l') => editor.move_right(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char(' ') => editor.pending_space = true,
+                                    KeyCode::Char('v') => {
+                                        editor.enter_visual_mode();
+                                        editor.mode = Mode::Visual;
+                                    }
                                     _ => {}
                                 }
                             }
@@ -385,6 +390,47 @@ fn main() -> Result<()> {
                             }
                             _ => {}
                         },
+                        Mode::Visual => {
+                            if editor.pending_g {
+                                match key.code {
+                                    KeyCode::Char('g') | KeyCode::Char('k') => editor.move_to_start(),
+                                    KeyCode::Char('e') | KeyCode::Char('j') => editor.move_to_end(),
+                                    KeyCode::Char('h') => editor.move_to_line_start(),
+                                    KeyCode::Char('l') => editor.move_to_line_end(),
+                                    _ => {}
+                                }
+                                editor.pending_g = false;
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        editor.exit_visual_mode();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('v') => {
+                                        editor.exit_visual_mode();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('h') => editor.move_left(),
+                                    KeyCode::Char('j') => editor.move_down(),
+                                    KeyCode::Char('k') => editor.move_up(),
+                                    KeyCode::Char('l') => editor.move_right(),
+                                    KeyCode::Char('g') => editor.pending_g = true,
+                                    KeyCode::Char('y') => {
+                                        editor.yank_selection();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('Y') => {
+                                        editor.yank_selection_system();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('d') => {
+                                        editor.delete_selection();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
             }

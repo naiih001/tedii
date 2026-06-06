@@ -14,4 +14,5 @@ serde = { version = "1.0", features = ["derive"] }
 tree-sitter = "0.25"
 libloading = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+arboard = "3"
 
