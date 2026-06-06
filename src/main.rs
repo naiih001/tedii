@@ -335,6 +335,8 @@ fn main() -> Result<()> {
                                         editor.enter_visual_mode();
                                         editor.mode = Mode::Visual;
                                     }
+                                    KeyCode::Char('p') => editor.paste_clipboard(),
+                                    KeyCode::Char('P') => editor.paste_system_clipboard(),
                                     _ => {}
                                 }
                             }
