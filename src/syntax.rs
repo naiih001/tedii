@@ -78,12 +78,12 @@ pub struct SyntaxHighlighter {
 }
 
 impl SyntaxHighlighter {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         Self {
             loader: GrammarLoader::new(),
             parser: Parser::new(),
             configs: HashMap::new(),
-            theme: Theme::default_theme(),
+            theme,
         }
     }
 

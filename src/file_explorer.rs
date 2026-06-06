@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
+use crate::theme::Theme;
 
 #[derive(Clone)]
 pub struct FileEntry {
@@ -24,10 +25,11 @@ pub struct FileExplorer {
     pub selection: usize,
     pub filter: String,
     scroll: usize,
+    theme: Theme,
 }
 
 impl FileExplorer {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             visible: false,
@@ -38,6 +40,7 @@ impl FileExplorer {
             selection: 0,
             filter: String::new(),
             scroll: 0,
+            theme,
         }
     }
 
@@ -162,7 +165,7 @@ impl FileExplorer {
         let block = Block::bordered()
             .title(" File Explorer ")
             .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(Color::White));
+            .border_style(self.theme.ui_get("explorer_border"));
         let inner = block.inner(popup_area);
         f.render_widget(block, popup_area);
 
@@ -186,7 +189,7 @@ impl FileExplorer {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 filter_text,
-                Style::default().fg(Color::Cyan),
+                self.theme.ui_get("explorer_filter"),
             ))),
             filter_area,
         );
@@ -205,9 +208,9 @@ impl FileExplorer {
             let line = format!(" {} {}{}", prefix, entry.name, suffix);
 
             let style = if selected {
-                Style::default().fg(Color::Black).bg(Color::Gray)
+                self.theme.ui_get("explorer_selected")
             } else if entry.is_dir {
-                Style::default().fg(Color::Cyan)
+                self.theme.ui_get("explorer_dir")
             } else {
                 Style::default()
             };

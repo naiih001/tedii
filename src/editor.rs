@@ -3,6 +3,7 @@ use ropey::Rope;
 use ratatui::text::{Text, Line, Span};
 use ratatui::style::Style;
 use crate::syntax::SyntaxHighlighter;
+use crate::theme::Theme;
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
@@ -25,11 +26,12 @@ pub struct Editor {
     pub command_buffer: String,
     pub current_file: Option<PathBuf>,
     pub highlighter: SyntaxHighlighter,
+    pub theme: Theme,
 }
 
 impl Editor {
-    pub fn new(text: &str, file_path: Option<&Path>) -> Self {
-        let mut highlighter = SyntaxHighlighter::new();
+    pub fn new(text: &str, file_path: Option<&Path>, theme: Theme) -> Self {
+        let mut highlighter = SyntaxHighlighter::new(theme.clone());
         if let Some(path) = file_path {
             if let Some(path_str) = path.to_str() {
                 highlighter.load_language_for_path(path_str);
@@ -47,6 +49,7 @@ impl Editor {
             command_buffer: String::new(),
             current_file: file_path.map(|p| p.to_path_buf()),
             highlighter,
+            theme,
         }
     }
 

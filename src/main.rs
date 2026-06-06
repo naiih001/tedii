@@ -8,6 +8,7 @@ mod theme;
 mod tui;
 
 use anyhow::Result;
+use config::load_theme_config;
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -18,12 +19,12 @@ use file_explorer::FileExplorer;
 use fuzzy_finder::FuzzyFinder;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
 use std::io::stdout;
 use std::path::PathBuf;
+use theme::Theme;
 use tui::Tui;
 
 fn main() -> Result<()> {
@@ -68,6 +69,11 @@ fn main() -> Result<()> {
         }
     }
 
+    let mut theme = Theme::default_theme();
+    if let Some(theme_config) = load_theme_config() {
+        theme.apply_config(theme_config);
+    }
+
     let file_content = if let Some(ref path) = file_path {
         match std::fs::read_to_string(path) {
             Ok(content) => content,
@@ -88,10 +94,10 @@ fn main() -> Result<()> {
     };
 
     let mut tui = Tui::new()?;
-    let mut editor = Editor::new(&file_content, file_path.as_deref());
+    let mut editor = Editor::new(&file_content, file_path.as_deref(), theme.clone());
 
-    let mut file_explorer = FileExplorer::new();
-    let mut fuzzy_finder = FuzzyFinder::new();
+    let mut file_explorer = FileExplorer::new(theme.clone());
+    let mut fuzzy_finder = FuzzyFinder::new(theme);
     if let Some(dir) = start_dir {
         file_explorer.set_dir(dir.clone());
         fuzzy_finder.set_dir(dir);
@@ -143,9 +149,9 @@ fn main() -> Result<()> {
             let mut line_numbers = Vec::new();
             for i in 0..line_count {
                 let style = if i == editor.buffer.char_to_line(editor.cursor) {
-                    Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 30))
+                    editor.theme.ui_get("gutter_current_line")
                 } else {
-                    Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 30))
+                    editor.theme.ui_get("gutter_line")
                 };
                 line_numbers.push(Line::from(vec![Span::styled(format!("{:>width$} ", i + 1, width = gutter_width - 1), style)]));
             }
@@ -169,10 +175,10 @@ fn main() -> Result<()> {
                 .split(chunks[1]);
 
             let mode_span = match editor.mode {
-                Mode::Normal => Span::styled(" NORMAL ", Style::default().fg(Color::White).bg(Color::Rgb(0, 0, 150))),
-                Mode::Insert => Span::styled(" INSERT ", Style::default().fg(Color::White).bg(Color::Rgb(0, 100, 0))),
-                Mode::Command => Span::styled(format!(" COMMAND :{} ", editor.command_buffer), Style::default().fg(Color::Black).bg(Color::Rgb(200, 200, 0))),
-                Mode::Fuzzy => Span::styled(" FUZZY ", Style::default().fg(Color::White).bg(Color::Rgb(150, 0, 150))),
+                Mode::Normal => Span::styled(" NORMAL ", editor.theme.ui_get("mode_normal")),
+                Mode::Insert => Span::styled(" INSERT ", editor.theme.ui_get("mode_insert")),
+                Mode::Command => Span::styled(format!(" COMMAND :{} ", editor.command_buffer), editor.theme.ui_get("mode_command")),
+                Mode::Fuzzy => Span::styled(" FUZZY ", editor.theme.ui_get("mode_fuzzy")),
             };
 
             let filename = editor.current_file
@@ -182,10 +188,10 @@ fn main() -> Result<()> {
             let left_text = Line::from(vec![
                 mode_span,
                 Span::raw(" "),
-                Span::styled(filename, Style::default().fg(Color::Yellow)),
+                Span::styled(filename, editor.theme.ui_get("status_bar_filename")),
             ]);
             let right_text = Line::from(vec![
-                Span::styled(format!(" {}:{} ", line_idx + 1, col_idx + 1), Style::default().fg(Color::White).bg(Color::Rgb(0, 100, 100))),
+                Span::styled(format!(" {}:{} ", line_idx + 1, col_idx + 1), editor.theme.ui_get("status_bar_cursor_pos")),
             ]);
 
             f.render_widget(Paragraph::new(left_text), status_chunks[0]);
