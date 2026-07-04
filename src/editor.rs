@@ -518,7 +518,7 @@ impl Editor {
         self.selection_anchor.map(|anchor| {
             let start = anchor.min(self.cursor);
             let end = anchor.max(self.cursor);
-            (start, end)
+            (start, (end + 1).min(self.buffer.len_chars()))
         })
     }
 
