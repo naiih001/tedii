@@ -6,6 +6,21 @@ use crate::git::{compute_diff, DiffHunk, GitRepo};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 
+fn matching_pair(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        ')' => Some('('),
+        ']' => Some('['),
+        '}' => Some('{'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '`' => Some('`'),
+        _ => None,
+    }
+}
+
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
     #[default]
@@ -307,6 +322,31 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, c: char) {
+        // Autopair: if typing an opener, insert closer too
+        if let Some(close) = matching_pair(c) {
+            let pair_ok = if c == close {
+                self.should_autopair_quote()
+            } else {
+                true
+            };
+            if pair_ok {
+                self.buffer.insert_char(self.cursor, c);
+                self.buffer.insert_char(self.cursor + 1, close);
+                self.cursor += 1;
+                self.buffer_version = self.buffer_version.wrapping_add(1);
+                return;
+            }
+        }
+
+        // Skip over: if typing a closer and next char matches, just advance
+        if self.cursor < self.buffer.len_chars() && self.buffer.char(self.cursor) == c &&
+            matching_pair(c) == Some(c)
+        {
+            self.cursor += 1;
+            return;
+        }
+
+        // Normal insert
         self.buffer.insert_char(self.cursor, c);
         self.cursor += 1;
         self.buffer_version = self.buffer_version.wrapping_add(1);
@@ -314,10 +354,28 @@ impl Editor {
 
     pub fn delete_char(&mut self) {
         if self.cursor > 0 {
+            let prev = self.buffer.char(self.cursor - 1);
+            if self.cursor < self.buffer.len_chars() {
+                let next = self.buffer.char(self.cursor);
+                if matching_pair(prev) == Some(next) {
+                    self.buffer.remove(self.cursor - 1..self.cursor + 1);
+                    self.cursor -= 1;
+                    self.buffer_version = self.buffer_version.wrapping_add(1);
+                    return;
+                }
+            }
             self.buffer.remove(self.cursor - 1..self.cursor);
             self.cursor -= 1;
             self.buffer_version = self.buffer_version.wrapping_add(1);
         }
+    }
+
+    fn should_autopair_quote(&self) -> bool {
+        if self.cursor == 0 {
+            return true;
+        }
+        let prev = self.buffer.char(self.cursor - 1);
+        matches!(prev, ' ' | '\t' | '\n' | '(' | '[' | '{' | ',' | ':' | ';' | '"' | '\'' | '`')
     }
 
     pub fn perform_search(&mut self) {
