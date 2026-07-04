@@ -394,7 +394,6 @@ fn main() -> Result<()> {
                                     KeyCode::Char('o') => {
                                         editor.move_to_line_end();
                                         editor.insert_char('\n');
-                                        editor.move_up();
                                         editor.mode = Mode::Insert;
                                     }
                                     KeyCode::Char('h') => editor.move_left(),
