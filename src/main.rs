@@ -243,8 +243,12 @@ fn main() -> Result<()> {
                 ));
                 left_spans.push(Span::raw(" "));
             }
+            let mut filename_display = filename.to_string();
+            if editor.is_dirty() {
+                filename_display.push_str(" *");
+            }
             left_spans.push(Span::styled(
-                filename,
+                filename_display,
                 editor.theme.ui_get("status_bar_filename"),
             ));
             let left_text = Line::from(left_spans);
