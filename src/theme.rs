@@ -6,7 +6,11 @@ use crate::config::{ColorDef, ThemeConfig};
 static DEFAULT_THEME: &[(&str, Color, Modifier)] = &[
     ("keyword", Color::Magenta, Modifier::empty()),
     ("keyword.control", Color::Magenta, Modifier::empty()),
-    ("keyword.control.conditional", Color::Magenta, Modifier::ITALIC),
+    (
+        "keyword.control.conditional",
+        Color::Magenta,
+        Modifier::ITALIC,
+    ),
     ("keyword.control.import", Color::Magenta, Modifier::empty()),
     ("keyword.control.repeat", Color::Magenta, Modifier::empty()),
     ("function", Color::Yellow, Modifier::empty()),
@@ -41,7 +45,11 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("mode_fuzzy", Color::White, Color::Rgb(150, 0, 150)),
         ("mode_visual", Color::White, Color::Rgb(100, 0, 100)),
         ("status_bar_filename", Color::Yellow, Color::Reset),
-        ("status_bar_cursor_pos", Color::White, Color::Rgb(0, 100, 100)),
+        (
+            "status_bar_cursor_pos",
+            Color::White,
+            Color::Rgb(0, 100, 100),
+        ),
         ("gutter_current_line", Color::Yellow, Color::Rgb(30, 30, 30)),
         ("gutter_line", Color::DarkGray, Color::Rgb(30, 30, 30)),
         ("explorer_border", Color::White, Color::Reset),
@@ -57,7 +65,11 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("visual_selection", Color::White, Color::Rgb(40, 40, 140)),
         ("status_bar_branch", Color::Cyan, Color::Reset),
         ("gutter_diff_added", Color::Green, Color::Rgb(30, 30, 30)),
-        ("gutter_diff_modified", Color::Yellow, Color::Rgb(30, 30, 30)),
+        (
+            "gutter_diff_modified",
+            Color::Yellow,
+            Color::Rgb(30, 30, 30),
+        ),
         ("gutter_diff_deleted", Color::Red, Color::Rgb(30, 30, 30)),
         ("git_border", Color::White, Color::Reset),
         ("git_query", Color::Cyan, Color::Reset),
@@ -102,7 +114,11 @@ fn parse_modifiers(modifiers: &[String]) -> Modifier {
 
 fn color_def_to_style(def: &ColorDef) -> Style {
     let fg = parse_hex(&def.fg).unwrap_or(Color::Reset);
-    let bg = def.bg.as_ref().and_then(|h| parse_hex(h)).unwrap_or(Color::Reset);
+    let bg = def
+        .bg
+        .as_ref()
+        .and_then(|h| parse_hex(h))
+        .unwrap_or(Color::Reset);
     let modifiers = parse_modifiers(&def.modifiers);
     Style::default().fg(fg).bg(bg).add_modifier(modifiers)
 }
@@ -111,7 +127,10 @@ impl Theme {
     pub fn default_theme() -> Self {
         let mut scopes = HashMap::new();
         for (name, color, modifier) in DEFAULT_THEME {
-            scopes.insert(name.to_string(), Style::default().fg(*color).add_modifier(*modifier));
+            scopes.insert(
+                name.to_string(),
+                Style::default().fg(*color).add_modifier(*modifier),
+            );
         }
 
         let mut ui = HashMap::new();

@@ -30,12 +30,11 @@ impl GrammarLoader {
         };
 
         let symbol_name = format!("tree_sitter_{}", name.replace('-', "_"));
-        let func: Symbol<unsafe extern "C" fn() -> *const tree_sitter::ffi::TSLanguage> =
-            unsafe {
-                lib.get(symbol_name.as_bytes()).with_context(|| {
-                    format!("Symbol {} not found in {}", symbol_name, path.display())
-                })?
-            };
+        let func: Symbol<unsafe extern "C" fn() -> *const tree_sitter::ffi::TSLanguage> = unsafe {
+            lib.get(symbol_name.as_bytes()).with_context(|| {
+                format!("Symbol {} not found in {}", symbol_name, path.display())
+            })?
+        };
 
         let lang_ptr = unsafe { func() };
         let language = unsafe { Language::from_raw(lang_ptr) };
@@ -105,9 +104,14 @@ impl SyntaxHighlighter {
         let query = Query::new(&language, query_source)
             .with_context(|| format!("Failed to compile query for language '{}'", name))?;
 
-        let capture_names: Vec<String> = query.capture_names().iter().map(|s| s.to_string()).collect();
+        let capture_names: Vec<String> = query
+            .capture_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-        self.configs.insert(name.to_string(), (query, capture_names));
+        self.configs
+            .insert(name.to_string(), (query, capture_names));
 
         Ok(())
     }
@@ -129,7 +133,10 @@ impl SyntaxHighlighter {
 
         let highlights_path = query_dir.join("highlights.scm");
         let query_source = if lang == "typescript" {
-            let js_path = runtime.join("queries").join("javascript").join("highlights.scm");
+            let js_path = runtime
+                .join("queries")
+                .join("javascript")
+                .join("highlights.scm");
             let mut combined = String::new();
             if let Ok(js) = std::fs::read_to_string(&js_path) {
                 combined.push_str(&js);
@@ -140,7 +147,9 @@ impl SyntaxHighlighter {
             }
             combined
         } else {
-            std::fs::read_to_string(&highlights_path).ok().unwrap_or_default()
+            std::fs::read_to_string(&highlights_path)
+                .ok()
+                .unwrap_or_default()
         };
 
         self.load_language(&lang, &grammar_path, &query_source).ok();
@@ -213,9 +222,7 @@ impl SyntaxHighlighter {
 
         // Sort by start byte ascending, end byte descending.
         // Wider ranges first, so narrower (innermost) ranges come later and overwrite.
-        highlights.sort_by(|a, b| {
-            a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1))
-        });
+        highlights.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
 
         highlights
     }

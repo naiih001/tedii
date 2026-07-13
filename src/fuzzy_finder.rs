@@ -1,5 +1,4 @@
-use std::path::{Path, PathBuf};
-use std::fs;
+use crate::theme::Theme;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::Style,
@@ -7,7 +6,8 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
-use crate::theme::Theme;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct ScoredEntry {
@@ -75,7 +75,8 @@ impl FuzzyFinder {
         if self.query.is_empty() {
             self.entries = self.all_entries.clone();
         } else {
-            let mut scored: Vec<ScoredEntry> = self.all_entries
+            let mut scored: Vec<ScoredEntry> = self
+                .all_entries
                 .iter()
                 .filter_map(|e| {
                     fuzzy_score(&self.query, &e.display).map(|(score, indices)| {
@@ -87,7 +88,8 @@ impl FuzzyFinder {
                 })
                 .collect();
             scored.sort_by(|a, b| {
-                b.score.cmp(&a.score)
+                b.score
+                    .cmp(&a.score)
                     .then(a.display.len().cmp(&b.display.len()))
             });
             self.entries = scored;
@@ -314,8 +316,10 @@ fn fuzzy_score(query: &str, target: &str) -> Option<(i64, Vec<usize>)> {
 
     if qi == qchars.len() {
         if indices.len() > 1 {
-            let gap =
-                *indices.last().unwrap() as i64 - *indices.first().unwrap() as i64 - indices.len() as i64 + 1;
+            let gap = *indices.last().unwrap() as i64
+                - *indices.first().unwrap() as i64
+                - indices.len() as i64
+                + 1;
             score -= 3 * gap;
         }
         Some((score, indices))
@@ -348,7 +352,9 @@ fn walk_dir(base: &Path, dir: &Path, entries: &mut Vec<ScoredEntry>) {
             if name.starts_with('.') {
                 continue;
             }
-            let Ok(ftype) = entry.file_type() else { continue };
+            let Ok(ftype) = entry.file_type() else {
+                continue;
+            };
             if ftype.is_symlink() {
                 continue;
             }
