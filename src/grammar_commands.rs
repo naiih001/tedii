@@ -11,7 +11,10 @@ pub fn fetch_grammars(config: &Config, runtime: &Path) -> Result<()> {
 
     for grammar in &config.grammars {
         let dest = sources_dir.join(&grammar.name);
-        println!("Fetching grammar '{}' from {} ...", grammar.name, grammar.source);
+        println!(
+            "Fetching grammar '{}' from {} ...",
+            grammar.name, grammar.source
+        );
 
         let url = tarball_url(&grammar.source)?;
 
@@ -82,7 +85,12 @@ pub fn build_grammars(config: &Config, runtime: &Path) -> Result<()> {
 
         let src_dir = if source_dir.join("src").join("parser.c").exists() {
             source_dir.join("src")
-        } else if source_dir.join(&grammar.name).join("src").join("parser.c").exists() {
+        } else if source_dir
+            .join(&grammar.name)
+            .join("src")
+            .join("parser.c")
+            .exists()
+        {
             source_dir.join(&grammar.name).join("src")
         } else {
             eprintln!(
@@ -184,8 +192,7 @@ fn tarball_url(source: &str) -> Result<String> {
 }
 
 pub fn find_or_create_runtime() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir()
-        .context("Could not find config directory")?;
+    let config_dir = dirs::config_dir().context("Could not find config directory")?;
     let path = config_dir.join("tedii").join("runtime");
     std::fs::create_dir_all(&path)?;
     Ok(path)

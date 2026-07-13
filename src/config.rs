@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{Context, Result};
 
 #[derive(Debug, Deserialize)]
 pub struct LanguageConfig {
@@ -31,7 +31,12 @@ impl Config {
     pub fn grammar_path(&self, name: &str) -> Option<PathBuf> {
         let _grammar = self.grammars.iter().find(|g| g.name == name)?;
         let config_dir = dirs::config_dir()?;
-        Some(config_dir.join("tedii").join("grammars").join(format!("{}.so", name)))
+        Some(
+            config_dir
+                .join("tedii")
+                .join("grammars")
+                .join(format!("{}.so", name)),
+        )
     }
 }
 
@@ -39,16 +44,19 @@ pub fn load_config() -> Result<Config> {
     let config_dir = dirs::config_dir()
         .context("Could not find config directory")?
         .join("tedii");
-    
+
     let config_path = config_dir.join("languages.toml");
-    
+
     if !config_path.exists() {
-        return Err(anyhow::anyhow!("Configuration file not found at {:?}", config_path));
+        return Err(anyhow::anyhow!(
+            "Configuration file not found at {:?}",
+            config_path
+        ));
     }
-    
+
     let content = fs::read_to_string(config_path)?;
     let config: Config = toml::from_str(&content)?;
-    
+
     Ok(config)
 }
 
@@ -72,9 +80,21 @@ pub struct ThemeConfig {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct KeybindingsConfig {
+    #[serde(default = "default_leader_keys")]
+    pub leader_keys: bool,
+}
+
+fn default_leader_keys() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
 struct ConfigToml {
     #[serde(default)]
     theme: Option<ThemeConfig>,
+    #[serde(default)]
+    keybindings: Option<KeybindingsConfig>,
 }
 
 pub fn load_theme_config() -> Option<ThemeConfig> {
@@ -86,4 +106,15 @@ pub fn load_theme_config() -> Option<ThemeConfig> {
     let content = fs::read_to_string(config_path).ok()?;
     let parsed: ConfigToml = toml::from_str(&content).ok()?;
     parsed.theme
+}
+
+pub fn load_keybindings_config() -> Option<KeybindingsConfig> {
+    let config_dir = dirs::config_dir()?;
+    let config_path = config_dir.join("tedii").join("config.toml");
+    if !config_path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(config_path).ok()?;
+    let parsed: ConfigToml = toml::from_str(&content).ok()?;
+    parsed.keybindings
 }

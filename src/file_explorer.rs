@@ -1,5 +1,4 @@
-use std::path::{Path, PathBuf};
-use std::fs;
+use crate::theme::Theme;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::Style,
@@ -7,7 +6,8 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
-use crate::theme::Theme;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct FileEntry {
@@ -74,7 +74,8 @@ impl FileExplorer {
             self.entries = self.all_entries.clone();
         } else {
             let lower = self.filter.to_lowercase();
-            self.entries = self.all_entries
+            self.entries = self
+                .all_entries
                 .iter()
                 .filter(|e| e.name.to_lowercase().contains(&lower))
                 .cloned()
@@ -218,7 +219,10 @@ impl FileExplorer {
             let y = entries_area.y + i as u16;
             if y < area.y + area.height {
                 let line_area = Rect::new(entries_area.x, y, entries_area.width, 1);
-                f.render_widget(Paragraph::new(Line::from(Span::styled(line, style))), line_area);
+                f.render_widget(
+                    Paragraph::new(Line::from(Span::styled(line, style))),
+                    line_area,
+                );
             }
         }
     }
@@ -252,11 +256,14 @@ fn read_directory(path: &Path) -> Vec<FileEntry> {
     });
 
     if let Some(parent) = path.parent() {
-        entries.insert(0, FileEntry {
-            name: "..".to_string(),
-            path: parent.to_path_buf(),
-            is_dir: true,
-        });
+        entries.insert(
+            0,
+            FileEntry {
+                name: "..".to_string(),
+                path: parent.to_path_buf(),
+                is_dir: true,
+            },
+        );
     }
 
     entries

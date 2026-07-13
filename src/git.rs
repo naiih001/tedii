@@ -13,11 +13,22 @@ use imara_diff::{Algorithm, Diff, InternedInput};
 
 #[derive(Debug, Clone)]
 pub enum FileChange {
-    Modified { path: PathBuf },
-    Untracked { path: PathBuf },
-    Deleted { path: PathBuf },
-    Renamed { from_path: PathBuf, to_path: PathBuf },
-    Conflict { path: PathBuf },
+    Modified {
+        path: PathBuf,
+    },
+    Untracked {
+        path: PathBuf,
+    },
+    Deleted {
+        path: PathBuf,
+    },
+    Renamed {
+        from_path: PathBuf,
+        to_path: PathBuf,
+    },
+    Conflict {
+        path: PathBuf,
+    },
 }
 
 impl FileChange {
@@ -48,11 +59,7 @@ pub struct GitRepo {
 
 impl GitRepo {
     pub fn discover(file: &Path) -> Option<Self> {
-        let dir = if file.is_dir() {
-            file
-        } else {
-            file.parent()?
-        };
+        let dir = if file.is_dir() { file } else { file.parent()? };
         let repo = ThreadSafeRepository::discover(dir).ok()?;
         Some(Self {
             repo: repo.to_thread_local(),
