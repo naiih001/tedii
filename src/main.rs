@@ -130,10 +130,7 @@ fn main() -> Result<()> {
             let area = f.area();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                ])
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(area);
 
             let editor_area = chunks[0];
@@ -192,12 +189,14 @@ fn main() -> Result<()> {
                 } else {
                     editor.theme.ui_get("gutter_line")
                 };
-                line_numbers.push(Line::from(vec![Span::styled(format!("{:>width$} ", i + 1, width = gutter_width as usize - 1), style)]));
+                line_numbers.push(Line::from(vec![Span::styled(
+                    format!("{:>width$} ", i + 1, width = gutter_width as usize - 1),
+                    style,
+                )]));
             }
 
             let diff_widget = Paragraph::new(diff_markers);
-            let gutter_widget = Paragraph::new(line_numbers)
-                .alignment(Alignment::Right);
+            let gutter_widget = Paragraph::new(line_numbers).alignment(Alignment::Right);
 
             let (styled_text, context_start) = editor.get_styled_text(scroll_y, viewport_height);
             let text_widget = Paragraph::new(styled_text)
@@ -219,13 +218,20 @@ fn main() -> Result<()> {
             let mode_span = match editor.mode {
                 Mode::Normal => Span::styled(" NORMAL ", editor.theme.ui_get("mode_normal")),
                 Mode::Insert => Span::styled(" INSERT ", editor.theme.ui_get("mode_insert")),
-                Mode::Command => Span::styled(format!(" COMMAND :{} ", editor.command_buffer), editor.theme.ui_get("mode_command")),
-                Mode::Search => Span::styled(format!(" SEARCH /{}/ ", editor.search_query), editor.theme.ui_get("mode_command")),
+                Mode::Command => Span::styled(
+                    format!(" COMMAND :{} ", editor.command_buffer),
+                    editor.theme.ui_get("mode_command"),
+                ),
+                Mode::Search => Span::styled(
+                    format!(" SEARCH /{}/ ", editor.search_query),
+                    editor.theme.ui_get("mode_command"),
+                ),
                 Mode::Fuzzy => Span::styled(" FUZZY ", editor.theme.ui_get("mode_fuzzy")),
                 Mode::Visual => Span::styled(" VISUAL ", editor.theme.ui_get("mode_visual")),
             };
 
-            let filename = editor.current_file
+            let filename = editor
+                .current_file
                 .as_ref()
                 .and_then(|p| p.to_str())
                 .unwrap_or("Untitled");
@@ -237,14 +243,21 @@ fn main() -> Result<()> {
                 ));
                 left_spans.push(Span::raw(" "));
             }
-            left_spans.push(Span::styled(filename, editor.theme.ui_get("status_bar_filename")));
+            left_spans.push(Span::styled(
+                filename,
+                editor.theme.ui_get("status_bar_filename"),
+            ));
             let left_text = Line::from(left_spans);
-            let right_text = Line::from(vec![
-                Span::styled(format!(" {}:{} ", line_idx + 1, col_idx + 1), editor.theme.ui_get("status_bar_cursor_pos")),
-            ]);
+            let right_text = Line::from(vec![Span::styled(
+                format!(" {}:{} ", line_idx + 1, col_idx + 1),
+                editor.theme.ui_get("status_bar_cursor_pos"),
+            )]);
 
             f.render_widget(Paragraph::new(left_text), status_chunks[0]);
-            f.render_widget(Paragraph::new(right_text).alignment(Alignment::Right), status_chunks[1]);
+            f.render_widget(
+                Paragraph::new(right_text).alignment(Alignment::Right),
+                status_chunks[1],
+            );
 
             file_explorer.render(f, area);
             fuzzy_finder.render(f, area);
@@ -332,7 +345,9 @@ fn main() -> Result<()> {
                         Mode::Normal => {
                             if editor.pending_g {
                                 match key.code {
-                                    KeyCode::Char('g') | KeyCode::Char('k') => editor.move_to_start(),
+                                    KeyCode::Char('g') | KeyCode::Char('k') => {
+                                        editor.move_to_start()
+                                    }
                                     KeyCode::Char('e') | KeyCode::Char('j') => editor.move_to_end(),
                                     KeyCode::Char('h') => editor.move_to_line_start(),
                                     KeyCode::Char('l') => editor.move_to_line_end(),
@@ -369,10 +384,14 @@ fn main() -> Result<()> {
                                         editor.search_query.clear();
                                     }
                                     KeyCode::Char('n') => {
-                                        if editor.search_active { editor.next_match(); }
+                                        if editor.search_active {
+                                            editor.next_match();
+                                        }
                                     }
                                     KeyCode::Char('N') => {
-                                        if editor.search_active { editor.prev_match(); }
+                                        if editor.search_active {
+                                            editor.prev_match();
+                                        }
                                     }
                                     KeyCode::Char(':') => {
                                         editor.mode = Mode::Command;
@@ -423,33 +442,31 @@ fn main() -> Result<()> {
                             KeyCode::Char(c) => editor.insert_char(c),
                             KeyCode::Backspace => editor.delete_char(),
                             KeyCode::Enter => editor.insert_char('\n'),
-                            KeyCode::Tab => editor.insert_char('\t'),
+                            KeyCode::Tab => editor.insert_tab(),
                             _ => {}
                         },
                         Mode::Command => match key.code {
                             KeyCode::Esc => editor.mode = Mode::Normal,
-                            KeyCode::Enter => {
-                                match editor.command_buffer.as_str() {
-                                    "q" => editor.should_quit = true,
-                                    "git" => {
-                                        refresh_git(&mut git_picker);
-                                        if !git_picker.is_empty() {
-                                            git_picker.visible = true;
-                                            editor.mode = Mode::Fuzzy;
-                                        }
-                                        editor.mode = Mode::Normal;
+                            KeyCode::Enter => match editor.command_buffer.as_str() {
+                                "q" => editor.should_quit = true,
+                                "git" => {
+                                    refresh_git(&mut git_picker);
+                                    if !git_picker.is_empty() {
+                                        git_picker.visible = true;
+                                        editor.mode = Mode::Fuzzy;
                                     }
-                                    "w" => {
-                                        let _ = editor.save();
-                                        editor.mode = Mode::Normal;
-                                    }
-                                    "wq" => {
-                                        let _ = editor.save();
-                                        editor.should_quit = true;
-                                    }
-                                    _ => editor.mode = Mode::Normal,
+                                    editor.mode = Mode::Normal;
                                 }
-                            }
+                                "w" => {
+                                    let _ = editor.save();
+                                    editor.mode = Mode::Normal;
+                                }
+                                "wq" => {
+                                    let _ = editor.save();
+                                    editor.should_quit = true;
+                                }
+                                _ => editor.mode = Mode::Normal,
+                            },
                             KeyCode::Char(c) => editor.command_buffer.push(c),
                             KeyCode::Backspace => {
                                 editor.command_buffer.pop();
@@ -481,7 +498,9 @@ fn main() -> Result<()> {
                         Mode::Visual => {
                             if editor.pending_g {
                                 match key.code {
-                                    KeyCode::Char('g') | KeyCode::Char('k') => editor.move_to_start(),
+                                    KeyCode::Char('g') | KeyCode::Char('k') => {
+                                        editor.move_to_start()
+                                    }
                                     KeyCode::Char('e') | KeyCode::Char('j') => editor.move_to_end(),
                                     KeyCode::Char('h') => editor.move_to_line_start(),
                                     KeyCode::Char('l') => editor.move_to_line_end(),
