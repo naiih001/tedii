@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
-use ropey::Rope;
-use ratatui::text::{Text, Line, Span};
-use ratatui::style::Style;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span, Text};
+use ropey::Rope;
+use std::path::{Path, PathBuf};
 
 fn matching_pair(c: char) -> Option<char> {
     match c {
@@ -74,7 +74,9 @@ impl Editor {
             .and_then(|p| {
                 let repo = GitRepo::discover(p)?;
                 let branch = repo.current_branch();
-                let base = repo.diff_base(p).map(|b| String::from_utf8_lossy(&b).to_string());
+                let base = repo
+                    .diff_base(p)
+                    .map(|b| String::from_utf8_lossy(&b).to_string());
                 Some((Some(repo), branch, base))
             })
             .unwrap_or((None, None, None));
@@ -148,13 +150,13 @@ impl Editor {
             let col = self.cursor - self.buffer.line_to_char(line);
             let prev_line = self.buffer.line(line - 1);
             let prev_line_len = prev_line.len_chars();
-            
+
             let max_col = if prev_line_len > 0 && prev_line.char(prev_line_len - 1) == '\n' {
                 prev_line_len - 1
             } else {
                 prev_line_len
             };
-            
+
             let new_col = col.min(max_col);
             self.cursor = self.buffer.line_to_char(line - 1) + new_col;
         }
@@ -166,13 +168,13 @@ impl Editor {
             let col = self.cursor - self.buffer.line_to_char(line);
             let next_line = self.buffer.line(line + 1);
             let next_line_len = next_line.len_chars();
-            
+
             let max_col = if next_line_len > 0 && next_line.char(next_line_len - 1) == '\n' {
                 next_line_len - 1
             } else {
                 next_line_len
             };
-            
+
             let new_col = col.min(max_col);
             self.cursor = self.buffer.line_to_char(line + 1) + new_col;
         }
@@ -253,7 +255,10 @@ impl Editor {
                 i -= 1;
             }
         } else {
-            while i > 0 && !self.buffer.char(i - 1).is_whitespace() && !is_word(self.buffer.char(i - 1)) {
+            while i > 0
+                && !self.buffer.char(i - 1).is_whitespace()
+                && !is_word(self.buffer.char(i - 1))
+            {
                 i -= 1;
             }
         }
@@ -266,7 +271,7 @@ impl Editor {
         let line = self.buffer.line(line_idx);
         let line_len = line.len_chars();
         let line_start = self.buffer.line_to_char(line_idx);
-        
+
         if line_len > 0 && line.char(line_len - 1) == '\n' {
             self.cursor = line_start + line_len - 1;
         } else {
@@ -339,8 +344,9 @@ impl Editor {
         }
 
         // Skip over: if typing a closer and next char matches, just advance
-        if self.cursor < self.buffer.len_chars() && self.buffer.char(self.cursor) == c &&
-            matching_pair(c) == Some(c)
+        if self.cursor < self.buffer.len_chars()
+            && self.buffer.char(self.cursor) == c
+            && matching_pair(c) == Some(c)
         {
             self.cursor += 1;
             return;
@@ -350,6 +356,12 @@ impl Editor {
         self.buffer.insert_char(self.cursor, c);
         self.cursor += 1;
         self.buffer_version = self.buffer_version.wrapping_add(1);
+    }
+
+    pub fn insert_tab(&mut self) {
+        for _ in 0..4 {
+            self.insert_char(' ');
+        }
     }
 
     pub fn delete_char(&mut self) {
@@ -375,7 +387,10 @@ impl Editor {
             return true;
         }
         let prev = self.buffer.char(self.cursor - 1);
-        matches!(prev, ' ' | '\t' | '\n' | '(' | '[' | '{' | ',' | ':' | ';' | '"' | '\'' | '`')
+        matches!(
+            prev,
+            ' ' | '\t' | '\n' | '(' | '[' | '{' | ',' | ':' | ';' | '"' | '\'' | '`'
+        )
     }
 
     pub fn perform_search(&mut self) {
@@ -523,9 +538,8 @@ impl Editor {
     }
 
     fn get_selected_text(&self) -> Option<String> {
-        self.get_selection_range().map(|(start, end)| {
-            self.buffer.slice(start..end).to_string()
-        })
+        self.get_selection_range()
+            .map(|(start, end)| self.buffer.slice(start..end).to_string())
     }
 
     pub fn yank_selection(&mut self) {
@@ -590,12 +604,18 @@ impl Editor {
         }
     }
 
-    pub fn get_styled_text(&mut self, visible_start_line: usize, visible_height: usize) -> (Text<'static>, usize) {
+    pub fn get_styled_text(
+        &mut self,
+        visible_start_line: usize,
+        visible_height: usize,
+    ) -> (Text<'static>, usize) {
         const CONTEXT_LINES: usize = 50;
 
         if self.buffer_version != self.cached_highlight_version {
             self.cached_text = self.buffer.to_string();
-            let lang = self.current_file.as_ref()
+            let lang = self
+                .current_file
+                .as_ref()
                 .and_then(|p| p.to_str())
                 .and_then(|p| self.highlighter.language_for_file(p))
                 .unwrap_or_default();
@@ -639,12 +659,21 @@ impl Editor {
         let visible_end_char = self.buffer.line_to_char(visible_end_line);
 
         self.cached_char_styles.clear();
-        self.cached_char_styles.resize(num_chars.max(1), Style::default());
+        self.cached_char_styles
+            .resize(num_chars.max(1), Style::default());
         let char_styles = &mut self.cached_char_styles;
 
         for (start, end, style) in highlights {
-            let sci = byte_to_char.get(*start).copied().unwrap_or(0).min(num_chars);
-            let eci = byte_to_char.get(*end).copied().unwrap_or(num_chars).min(num_chars);
+            let sci = byte_to_char
+                .get(*start)
+                .copied()
+                .unwrap_or(0)
+                .min(num_chars);
+            let eci = byte_to_char
+                .get(*end)
+                .copied()
+                .unwrap_or(num_chars)
+                .min(num_chars);
             for ci in sci..eci {
                 char_styles[ci] = *style;
             }
@@ -715,5 +744,21 @@ impl Editor {
         } else if width > 0 && col_idx >= self.scroll_x + width {
             self.scroll_x = col_idx - width + 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_tab_expands_to_spaces() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("", None, theme);
+
+        editor.insert_tab();
+
+        assert_eq!(editor.buffer.to_string(), "    ");
+        assert_eq!(editor.cursor, 4);
     }
 }
