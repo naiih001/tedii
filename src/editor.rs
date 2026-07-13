@@ -56,6 +56,7 @@ pub struct Editor {
     diff_base: Option<String>,
     git_repo: Option<GitRepo>,
     buffer_version: u64,
+    saved_buffer_version: u64,
     cached_text: String,
     cached_highlights: Vec<(usize, usize, Style)>,
     cached_highlight_version: u64,
@@ -104,6 +105,7 @@ impl Editor {
             diff_base,
             git_repo,
             buffer_version: 0,
+            saved_buffer_version: 0,
             cached_text: text.to_string(),
             cached_highlights: Vec::new(),
             cached_highlight_version: 0,
@@ -111,11 +113,16 @@ impl Editor {
         }
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&mut self) -> anyhow::Result<()> {
         if let Some(ref path) = self.current_file {
             std::fs::write(path, self.buffer.to_string())?;
+            self.saved_buffer_version = self.buffer_version;
         }
         Ok(())
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.buffer_version != self.saved_buffer_version
     }
 
     pub fn move_left(&mut self) {
@@ -494,6 +501,7 @@ impl Editor {
         let content = std::fs::read_to_string(path)?;
         self.buffer = Rope::from_str(&content);
         self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.saved_buffer_version = self.buffer_version;
         self.cursor = 0;
         self.scroll_x = 0;
         self.scroll_y = 0;
@@ -517,6 +525,7 @@ impl Editor {
             .and_then(|r| r.diff_base(path))
             .map(|b| String::from_utf8_lossy(&b).to_string());
         self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.saved_buffer_version = self.buffer_version;
         self.refresh_diff();
         Ok(())
     }
