@@ -10,7 +10,7 @@ mod theme;
 mod tui;
 
 use anyhow::Result;
-use config::load_theme_config;
+use config::{load_theme_config, load_keybindings_config};
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -76,6 +76,12 @@ fn main() -> Result<()> {
     if let Some(theme_config) = load_theme_config() {
         theme.apply_config(theme_config);
     }
+
+    let keybindings_config = load_keybindings_config();
+    let leader_keys_enabled = keybindings_config
+        .as_ref()
+        .map(|k| k.leader_keys)
+        .unwrap_or(true);
 
     let file_content = if let Some(ref path) = file_path {
         match std::fs::read_to_string(path) {
@@ -378,6 +384,12 @@ fn main() -> Result<()> {
                                             git_picker.visible = true;
                                             editor.mode = Mode::Fuzzy;
                                         }
+                                    }
+                                    KeyCode::Char('w') if leader_keys_enabled => {
+                                        let _ = editor.save();
+                                    }
+                                    KeyCode::Char('q') if leader_keys_enabled => {
+                                        editor.should_quit = true;
                                     }
                                     _ => {}
                                 }
