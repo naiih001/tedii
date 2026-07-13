@@ -61,6 +61,8 @@ pub struct Editor {
     cached_highlights: Vec<(usize, usize, Style)>,
     cached_highlight_version: u64,
     cached_char_styles: Vec<Style>,
+    undo_stack: Vec<(Rope, usize)>,
+    redo_stack: Vec<(Rope, usize)>,
 }
 
 impl Editor {
@@ -110,6 +112,8 @@ impl Editor {
             cached_highlights: Vec::new(),
             cached_highlight_version: 0,
             cached_char_styles: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -123,6 +127,29 @@ impl Editor {
 
     pub fn is_dirty(&self) -> bool {
         self.buffer_version != self.saved_buffer_version
+    }
+
+    pub fn begin_undo_group(&mut self) {
+        self.undo_stack.push((self.buffer.clone(), self.cursor));
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some((buffer, cursor)) = self.undo_stack.pop() {
+            self.redo_stack.push((self.buffer.clone(), self.cursor));
+            self.buffer = buffer;
+            self.cursor = self.cursor.min(self.buffer.len_chars());
+            self.buffer_version = self.buffer_version.wrapping_add(1);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some((buffer, cursor)) = self.redo_stack.pop() {
+            self.undo_stack.push((self.buffer.clone(), self.cursor));
+            self.buffer = buffer;
+            self.cursor = cursor;
+            self.buffer_version = self.buffer_version.wrapping_add(1);
+        }
     }
 
     pub fn move_left(&mut self) {
@@ -513,6 +540,8 @@ impl Editor {
         self.search_query.clear();
         self.search_results.clear();
         self.search_active = false;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
         if let Some(path_str) = path.to_str() {
             self.highlighter.load_language_for_path(path_str);
         }
@@ -571,6 +600,7 @@ impl Editor {
     pub fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection_range() {
             if start < end {
+                self.begin_undo_group();
                 self.clipboard = self.buffer.slice(start..end).to_string();
                 self.buffer.remove(start..end);
                 self.cursor = start;
@@ -584,6 +614,7 @@ impl Editor {
         if text.is_empty() {
             return;
         }
+        self.begin_undo_group();
         if text.ends_with('\n') {
             let line_idx = self.buffer.char_to_line(self.cursor);
             let next_line = line_idx + 1;

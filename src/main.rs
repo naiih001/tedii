@@ -413,21 +413,28 @@ fn main() -> Result<()> {
                                         editor.mode = Mode::Command;
                                         editor.command_buffer.clear();
                                     }
-                                    KeyCode::Char('i') => editor.mode = Mode::Insert,
+                                    KeyCode::Char('i') => {
+                                        editor.begin_undo_group();
+                                        editor.mode = Mode::Insert;
+                                    }
                                     KeyCode::Char('I') => {
                                         editor.move_to_line_start();
+                                        editor.begin_undo_group();
                                         editor.mode = Mode::Insert;
                                     }
                                     KeyCode::Char('a') => {
                                         editor.move_right();
+                                        editor.begin_undo_group();
                                         editor.mode = Mode::Insert;
                                     }
                                     KeyCode::Char('A') => {
                                         editor.move_to_line_end();
+                                        editor.begin_undo_group();
                                         editor.mode = Mode::Insert;
                                     }
                                     KeyCode::Char('o') => {
                                         editor.move_to_line_end();
+                                        editor.begin_undo_group();
                                         editor.insert_char('\n');
                                         editor.mode = Mode::Insert;
                                     }
@@ -449,6 +456,8 @@ fn main() -> Result<()> {
                                     }
                                     KeyCode::Char('p') => editor.paste_clipboard(),
                                     KeyCode::Char('P') => editor.paste_system_clipboard(),
+                                    KeyCode::Char('u') => editor.undo(),
+                                    KeyCode::Char('U') if key.modifiers == KeyModifiers::CONTROL => editor.redo(),
                                     _ => {}
                                 }
                             }
