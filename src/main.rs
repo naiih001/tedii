@@ -438,6 +438,12 @@ fn main() -> Result<()> {
                                         editor.insert_char('\n');
                                         editor.mode = Mode::Insert;
                                     }
+                                    KeyCode::Char('O') => {
+                                        editor.move_to_line_start();
+                                        editor.insert_char('\n');
+                                        editor.move_up();
+                                        editor.mode = Mode::Insert;
+                                    }
                                     KeyCode::Char('h') => editor.move_left(),
                                     KeyCode::Char('j') => editor.move_down(),
                                     KeyCode::Char('k') => editor.move_up(),
