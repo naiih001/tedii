@@ -63,6 +63,10 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("fuzzy_match", Color::Yellow, Color::Reset),
         ("search_match", Color::Yellow, Color::Reset),
         ("visual_selection", Color::White, Color::Rgb(40, 40, 140)),
+        ("diagnostic_error", Color::Red, Color::Reset),
+        ("diagnostic_warning", Color::Yellow, Color::Reset),
+        ("diagnostic_information", Color::Cyan, Color::Reset),
+        ("diagnostic_hint", Color::DarkGray, Color::Reset),
         ("status_bar_branch", Color::Cyan, Color::Reset),
         ("gutter_diff_added", Color::Green, Color::Rgb(30, 30, 30)),
         (

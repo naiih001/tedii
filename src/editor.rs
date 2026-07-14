@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
-use crate::lsp::{DiagnosticState, LspSession};
+use crate::lsp::{DiagnosticSeverity, DiagnosticState, LspSession};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
-use ratatui::style::Style;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ropey::Rope;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,75 @@ fn lsp_root_dir(path: &Path) -> &Path {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+fn lsp_position_to_char(buffer: &Rope, line: usize, utf16_character: usize) -> usize {
+    if line >= buffer.len_lines() {
+        return buffer.len_chars();
+    }
+
+    let line_start = buffer.line_to_char(line);
+    let mut utf16_offset = 0;
+    let mut char_offset = 0;
+    for character in buffer.line(line).chars() {
+        if matches!(character, '\r' | '\n') {
+            break;
+        }
+        let next_offset = utf16_offset + character.len_utf16();
+        if next_offset > utf16_character {
+            break;
+        }
+        utf16_offset = next_offset;
+        char_offset += 1;
+    }
+    line_start + char_offset
+}
+
+fn diagnostic_theme_key(severity: DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Error => "diagnostic_error",
+        DiagnosticSeverity::Warning => "diagnostic_warning",
+        DiagnosticSeverity::Information => "diagnostic_information",
+        DiagnosticSeverity::Hint => "diagnostic_hint",
+    }
+}
+
+fn apply_diagnostic_underlines(
+    buffer: &Rope,
+    diagnostics: &DiagnosticState,
+    char_styles: &mut [Style],
+    theme: &Theme,
+) {
+    let text_len = buffer.len_chars().min(char_styles.len());
+    let mut items = diagnostics
+        .diagnostics_by_line
+        .values()
+        .flatten()
+        .collect::<Vec<_>>();
+    items.sort_by_key(|diagnostic| std::cmp::Reverse(diagnostic.severity));
+
+    for diagnostic in items {
+        let start =
+            lsp_position_to_char(buffer, diagnostic.line, diagnostic.character).min(text_len);
+        let mut end = lsp_position_to_char(buffer, diagnostic.end_line, diagnostic.end_character)
+            .min(text_len);
+        if end <= start && start < text_len {
+            end = start + 1;
+        }
+
+        let color = theme
+            .ui_get(diagnostic_theme_key(diagnostic.severity))
+            .fg
+            .unwrap_or(Color::Reset);
+        let underline = Style::default()
+            .underline_color(color)
+            .add_modifier(Modifier::UNDERLINED);
+        for (index, char_style) in char_styles.iter_mut().enumerate().take(end).skip(start) {
+            if !matches!(buffer.char(index), '\r' | '\n') {
+                *char_style = char_style.patch(underline);
+            }
+        }
+    }
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
@@ -903,6 +972,13 @@ impl Editor {
             }
         }
 
+        apply_diagnostic_underlines(
+            &self.buffer,
+            &self.lsp_diagnostics,
+            char_styles,
+            &self.theme,
+        );
+
         let mut lines: Vec<Line> = Vec::new();
         let mut spans: Vec<Span> = Vec::new();
         let mut seg_start = context_start_char;
@@ -959,6 +1035,25 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::{Diagnostic, DiagnosticSeverity};
+
+    fn diagnostic(
+        severity: DiagnosticSeverity,
+        line: usize,
+        character: usize,
+        end_line: usize,
+        end_character: usize,
+    ) -> Diagnostic {
+        Diagnostic {
+            severity,
+            message: "diagnostic".into(),
+            source: None,
+            line,
+            character,
+            end_line,
+            end_character,
+        }
+    }
 
     #[test]
     fn bare_file_name_uses_current_directory_as_lsp_root() {
@@ -996,5 +1091,85 @@ mod tests {
         assert!(!editor.split_bracket_pair_at_cursor());
         assert_eq!(editor.buffer.to_string(), "abc");
         assert_eq!(editor.cursor, 1);
+    }
+
+    #[test]
+    fn diagnostic_underlines_exact_range_without_replacing_text_style() {
+        let buffer = Rope::from_str("let value = 1;\n");
+        let theme = Theme::default_theme();
+        let base_style = Style::default().fg(Color::Green).bg(Color::Black);
+        let mut styles = vec![base_style; buffer.len_chars()];
+        let mut diagnostics = DiagnosticState::default();
+        diagnostics.update(vec![diagnostic(DiagnosticSeverity::Warning, 0, 4, 0, 9)]);
+
+        apply_diagnostic_underlines(&buffer, &diagnostics, &mut styles, &theme);
+
+        for (index, style) in styles.iter().enumerate() {
+            assert_eq!(style.fg, Some(Color::Green));
+            assert_eq!(style.bg, Some(Color::Black));
+            if (4..9).contains(&index) {
+                assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+                assert_eq!(style.underline_color, Some(Color::Yellow));
+            } else {
+                assert!(!style.add_modifier.contains(Modifier::UNDERLINED));
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostic_underlines_utf16_multiline_range_without_newlines() {
+        let buffer = Rope::from_str("a😀b\ncd\n");
+        let theme = Theme::default_theme();
+        let mut styles = vec![Style::default(); buffer.len_chars()];
+        let mut diagnostics = DiagnosticState::default();
+        diagnostics.update(vec![diagnostic(
+            DiagnosticSeverity::Information,
+            0,
+            1,
+            1,
+            1,
+        )]);
+
+        apply_diagnostic_underlines(&buffer, &diagnostics, &mut styles, &theme);
+
+        for index in [1, 2, 4] {
+            assert!(styles[index].add_modifier.contains(Modifier::UNDERLINED));
+            assert_eq!(styles[index].underline_color, Some(Color::Cyan));
+        }
+        assert!(!styles[3].add_modifier.contains(Modifier::UNDERLINED));
+        assert!(!styles[5].add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn highest_severity_wins_and_empty_ranges_mark_one_character() {
+        let buffer = Rope::from_str("abcd");
+        let theme = Theme::default_theme();
+        let mut styles = vec![Style::default(); buffer.len_chars()];
+        let mut diagnostics = DiagnosticState::default();
+        diagnostics.update(vec![
+            diagnostic(DiagnosticSeverity::Warning, 0, 0, 0, 3),
+            diagnostic(DiagnosticSeverity::Error, 0, 1, 0, 2),
+            diagnostic(DiagnosticSeverity::Hint, 0, 3, 0, 3),
+        ]);
+
+        apply_diagnostic_underlines(&buffer, &diagnostics, &mut styles, &theme);
+
+        assert_eq!(styles[0].underline_color, Some(Color::Yellow));
+        assert_eq!(styles[1].underline_color, Some(Color::Red));
+        assert_eq!(styles[2].underline_color, Some(Color::Yellow));
+        assert_eq!(styles[3].underline_color, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn empty_buffer_ignores_zero_length_diagnostic() {
+        let buffer = Rope::new();
+        let theme = Theme::default_theme();
+        let mut styles = vec![Style::default()];
+        let mut diagnostics = DiagnosticState::default();
+        diagnostics.update(vec![diagnostic(DiagnosticSeverity::Error, 0, 0, 0, 0)]);
+
+        apply_diagnostic_underlines(&buffer, &diagnostics, &mut styles, &theme);
+
+        assert_eq!(styles, vec![Style::default()]);
     }
 }

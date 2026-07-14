@@ -5,8 +5,8 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -41,6 +41,8 @@ pub struct Diagnostic {
     pub source: Option<String>,
     pub line: usize,
     pub character: usize,
+    pub end_line: usize,
+    pub end_character: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -419,6 +421,7 @@ fn parse_diagnostics(params: &serde_json::Value) -> Vec<Diagnostic> {
         let severity = DiagnosticSeverity::from_lsp(item.get("severity").and_then(|v| v.as_u64()));
         let range = item.get("range").cloned().unwrap_or_default();
         let start = range.get("start").cloned().unwrap_or_default();
+        let end = range.get("end").cloned().unwrap_or_else(|| start.clone());
         diagnostics.push(Diagnostic {
             severity,
             message: item
@@ -426,9 +429,14 @@ fn parse_diagnostics(params: &serde_json::Value) -> Vec<Diagnostic> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            source: item.get("source").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            source: item
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             line: start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
             character: start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            end_line: end.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            end_character: end.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
         });
     }
     diagnostics
@@ -487,6 +495,8 @@ mod tests {
                 source: None,
                 line: 4,
                 character: 9,
+                end_line: 4,
+                end_character: 10,
             },
             Diagnostic {
                 severity: DiagnosticSeverity::Warning,
@@ -494,6 +504,8 @@ mod tests {
                 source: None,
                 line: 4,
                 character: 2,
+                end_line: 4,
+                end_character: 3,
             },
             Diagnostic {
                 severity: DiagnosticSeverity::Hint,
@@ -501,6 +513,8 @@ mod tests {
                 source: None,
                 line: 7,
                 character: 1,
+                end_line: 7,
+                end_character: 2,
             },
         ]);
 
@@ -529,6 +543,8 @@ mod tests {
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
         assert_eq!(diagnostics[0].line, 3);
         assert_eq!(diagnostics[0].character, 5);
+        assert_eq!(diagnostics[0].end_line, 3);
+        assert_eq!(diagnostics[0].end_character, 10);
         assert_eq!(diagnostics[0].message, "bad thing");
     }
 }
