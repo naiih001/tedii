@@ -1,4 +1,5 @@
 /target
+.worktrees/
 
 
 # Added by cargo
