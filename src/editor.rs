@@ -108,7 +108,7 @@ impl Editor {
             saved_buffer_version: 0,
             cached_text: text.to_string(),
             cached_highlights: Vec::new(),
-            cached_highlight_version: 0,
+            cached_highlight_version: 1, // Force initial highlight on first render
             cached_char_styles: Vec::new(),
         }
     }
