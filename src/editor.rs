@@ -398,6 +398,36 @@ impl Editor {
         }
     }
 
+    pub fn split_bracket_pair_at_cursor(&mut self) -> bool {
+        if self.cursor >= self.buffer.len_chars() {
+            return false;
+        }
+
+        let next = self.buffer.char(self.cursor);
+        let Some(prev_idx) = self.cursor.checked_sub(1) else {
+            return false;
+        };
+        let prev = self.buffer.char(prev_idx);
+
+        let expected_close = match prev {
+            '(' => ')',
+            '[' => ']',
+            '{' => '}',
+            _ => return false,
+        };
+
+        if next != expected_close {
+            return false;
+        }
+
+        self.begin_undo_group();
+        self.buffer.remove(self.cursor..self.cursor + 1);
+        self.buffer.insert(self.cursor, "\n    \n)");
+        self.cursor += 5;
+        self.buffer_version = self.buffer_version.wrapping_add(1);
+        true
+    }
+
     pub fn delete_char(&mut self) {
         if self.cursor > 0 {
             let prev = self.buffer.char(self.cursor - 1);
@@ -800,5 +830,27 @@ mod tests {
 
         assert_eq!(editor.buffer.to_string(), "    ");
         assert_eq!(editor.cursor, 4);
+    }
+
+    #[test]
+    fn split_bracket_pair_inserts_multiline_block() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("()", None, theme);
+        editor.cursor = 1;
+
+        assert!(editor.split_bracket_pair_at_cursor());
+        assert_eq!(editor.buffer.to_string(), "(\n    \n)");
+        assert_eq!(editor.cursor, 6);
+    }
+
+    #[test]
+    fn split_bracket_pair_returns_false_outside_pair() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("abc", None, theme);
+        editor.cursor = 1;
+
+        assert!(!editor.split_bracket_pair_at_cursor());
+        assert_eq!(editor.buffer.to_string(), "abc");
+        assert_eq!(editor.cursor, 1);
     }
 }
