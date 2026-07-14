@@ -103,10 +103,8 @@ fn parse_hex(hex: &str) -> Option<Color> {
 fn parse_modifiers(modifiers: &[String]) -> Modifier {
     let mut m = Modifier::empty();
     for s in modifiers {
-        match s.as_str() {
-            "italic" => m |= Modifier::ITALIC,
-            // TODO: add bold, dim, underline, blink, reversed, hidden, strikethrough
-            _ => {}
+        if s.as_str() == "italic" {
+            m |= Modifier::ITALIC;
         }
     }
     m
