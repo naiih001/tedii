@@ -493,6 +493,7 @@ impl Editor {
         }
     }
 
+    #[allow(dead_code)]
     pub fn git_repo(&self) -> Option<&GitRepo> {
         self.git_repo.as_ref()
     }
@@ -683,23 +684,23 @@ impl Editor {
                 .copied()
                 .unwrap_or(num_chars)
                 .min(num_chars);
-            for ci in sci..eci {
-                char_styles[ci] = *style;
+            for char_style in char_styles.iter_mut().take(eci).skip(sci) {
+                *char_style = *style;
             }
         }
 
         if search_active {
             for &start in &search_results {
                 let end = (start + match_len).min(num_chars);
-                for ci in start..end {
-                    char_styles[ci] = search_hl_style;
+                for char_style in char_styles.iter_mut().take(end).skip(start) {
+                    *char_style = search_hl_style;
                 }
             }
         }
 
         if let Some((sel_start, sel_end)) = sel_range {
-            for ci in sel_start..sel_end {
-                char_styles[ci] = sel_style;
+            for char_style in char_styles.iter_mut().take(sel_end).skip(sel_start) {
+                *char_style = sel_style;
             }
         }
 
