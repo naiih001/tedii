@@ -5,12 +5,13 @@ mod fuzzy_finder;
 mod git;
 mod git_picker;
 mod grammar_commands;
+mod lsp;
 mod syntax;
 mod theme;
 mod tui;
 
 use anyhow::Result;
-use config::{load_keybindings_config, load_theme_config};
+use config::{load_config, load_keybindings_config, load_theme_config};
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -72,6 +73,7 @@ fn main() -> Result<()> {
         }
     }
 
+    let language_config = load_config().ok();
     let mut theme = Theme::default_theme();
     if let Some(theme_config) = load_theme_config() {
         theme.apply_config(theme_config);
@@ -103,7 +105,7 @@ fn main() -> Result<()> {
     };
 
     let mut tui = Tui::new()?;
-    let mut editor = Editor::new(&file_content, file_path.as_deref(), theme.clone());
+    let mut editor = Editor::new(&file_content, file_path.as_deref(), theme.clone(), language_config);
 
     let mut file_explorer = FileExplorer::new(theme.clone());
     let mut fuzzy_finder = FuzzyFinder::new(theme.clone());
@@ -258,16 +260,54 @@ fn main() -> Result<()> {
                 editor.theme.ui_get("status_bar_filename"),
             ));
             let left_text = Line::from(left_spans);
-            let right_text = Line::from(vec![Span::styled(
-                format!(" {}:{} ", line_idx + 1, col_idx + 1),
-                editor.theme.ui_get("status_bar_cursor_pos"),
-            )]);
+            let right_text = Line::from(vec![
+                Span::styled(
+                    format!(" {}:{} ", line_idx + 1, col_idx + 1),
+                    editor.theme.ui_get("status_bar_cursor_pos"),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!(
+                        " E:{} W:{} ",
+                        editor.lsp_diagnostics.error_count, editor.lsp_diagnostics.warning_count
+                    ),
+                    editor.theme.ui_get("status_bar_cursor_pos"),
+                ),
+            ]);
 
             f.render_widget(Paragraph::new(left_text), status_chunks[0]);
             f.render_widget(
                 Paragraph::new(right_text).alignment(Alignment::Right),
                 status_chunks[1],
             );
+
+            if let Some(diagnostic) = editor.active_diagnostic() {
+                let popup_text = vec![Line::from(vec![Span::raw(format!(
+                    "{:?}: {}",
+                    diagnostic.severity, diagnostic.message
+                ))])];
+                let popup_width = popup_text
+                    .iter()
+                    .map(|line| line.width() as u16)
+                    .max()
+                    .unwrap_or(0)
+                    .min(content_area.width.saturating_sub(2));
+                let popup_height = popup_text.len() as u16 + 2;
+                let popup_area = ratatui::layout::Rect {
+                    x: content_area
+                        .x
+                        .saturating_add(content_area.width.saturating_sub(popup_width + 2)),
+                    y: content_area
+                        .y
+                        .saturating_add(content_area.height.saturating_sub(popup_height + 1)),
+                    width: popup_width + 2,
+                    height: popup_height,
+                };
+                f.render_widget(
+                    Paragraph::new(popup_text).block(ratatui::widgets::Block::bordered()),
+                    popup_area,
+                );
+            }
 
             file_explorer.render(f, area);
             fuzzy_finder.render(f, area);
@@ -395,6 +435,16 @@ fn main() -> Result<()> {
                                 }
                             } else {
                                 match key.code {
+                                    KeyCode::Char('j')
+                                        if key.modifiers == KeyModifiers::ALT =>
+                                    {
+                                        editor.cycle_active_diagnostic(1);
+                                    }
+                                    KeyCode::Char('k')
+                                        if key.modifiers == KeyModifiers::ALT =>
+                                    {
+                                        editor.cycle_active_diagnostic(-1);
+                                    }
                                     KeyCode::Char('/') => {
                                         editor.mode = Mode::Search;
                                         editor.search_query.clear();

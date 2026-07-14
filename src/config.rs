@@ -12,6 +12,16 @@ pub struct LanguageConfig {
     pub file_types: Vec<String>,
     pub grammar: String,
     pub highlights: Option<PathBuf>,
+    #[serde(default)]
+    pub lsp: Option<LspServerConfig>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct LspServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -41,6 +51,16 @@ impl Config {
                 .join("grammars")
                 .join(format!("{}.so", name)),
         )
+    }
+
+    pub fn language_for_file(&self, filename: &str) -> Option<&LanguageConfig> {
+        let ext = std::path::Path::new(filename).extension()?.to_str()?;
+        self.languages.iter().find(|language| {
+            language
+                .file_types
+                .iter()
+                .any(|file_type| file_type == ext)
+        })
     }
 }
 

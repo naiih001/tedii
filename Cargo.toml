@@ -17,5 +17,5 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 arboard = "3"
 gix = { version = "0.84", default-features = false, features = ["attributes", "status", "max-performance", "sha1"] }
 imara-diff = "0.2"
-
+serde_json = "1.0"
 
