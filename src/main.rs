@@ -10,7 +10,7 @@ mod theme;
 mod tui;
 
 use anyhow::Result;
-use config::{load_theme_config, load_keybindings_config};
+use config::{load_keybindings_config, load_theme_config};
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyCode, KeyModifiers},
