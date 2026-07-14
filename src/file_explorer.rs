@@ -86,15 +86,25 @@ impl FileExplorer {
     }
 
     pub fn navigate_up(&mut self) {
-        if self.selection > 0 {
-            self.selection -= 1;
+        if self.entries.is_empty() {
+            return;
         }
+        self.selection = if self.selection == 0 {
+            self.entries.len() - 1
+        } else {
+            self.selection - 1
+        };
     }
 
     pub fn navigate_down(&mut self) {
-        if !self.entries.is_empty() && self.selection < self.entries.len() - 1 {
-            self.selection += 1;
+        if self.entries.is_empty() {
+            return;
         }
+        self.selection = if self.selection + 1 >= self.entries.len() {
+            0
+        } else {
+            self.selection + 1
+        };
     }
 
     pub fn enter(&mut self) -> Option<PathBuf> {
@@ -267,4 +277,52 @@ fn read_directory(path: &Path) -> Vec<FileEntry> {
     }
 
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn explorer_with_entries(count: usize) -> FileExplorer {
+        let mut explorer = FileExplorer::new(Theme::default_theme());
+        explorer.entries = (0..count)
+            .map(|i| FileEntry {
+                name: format!("file{i}"),
+                path: PathBuf::from(format!("file{i}")),
+                is_dir: false,
+            })
+            .collect();
+        explorer
+    }
+
+    #[test]
+    fn navigate_up_wraps_to_bottom() {
+        let mut explorer = explorer_with_entries(3);
+        explorer.selection = 0;
+
+        explorer.navigate_up();
+
+        assert_eq!(explorer.selection, 2);
+    }
+
+    #[test]
+    fn navigate_down_wraps_to_top() {
+        let mut explorer = explorer_with_entries(3);
+        explorer.selection = 2;
+
+        explorer.navigate_down();
+
+        assert_eq!(explorer.selection, 0);
+    }
+
+    #[test]
+    fn navigate_wraps_in_single_entry_list() {
+        let mut explorer = explorer_with_entries(1);
+
+        explorer.navigate_up();
+        assert_eq!(explorer.selection, 0);
+
+        explorer.navigate_down();
+        assert_eq!(explorer.selection, 0);
+    }
 }
