@@ -473,7 +473,11 @@ fn main() -> Result<()> {
                             KeyCode::Char(c) => editor.insert_char(c),
                             KeyCode::Backspace => editor.delete_char(),
                             KeyCode::Enter => editor.insert_char('\n'),
-                            KeyCode::Tab => editor.insert_tab(),
+                            KeyCode::Tab => {
+                                if !editor.split_bracket_pair_at_cursor() {
+                                    editor.insert_tab();
+                                }
+                            }
                             _ => {}
                         },
                         Mode::Command => match key.code {
