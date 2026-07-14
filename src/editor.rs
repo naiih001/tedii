@@ -1,4 +1,6 @@
+use crate::config::Config;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
+use crate::lsp::{DiagnosticState, LspSession};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 use ratatui::style::Style;
@@ -53,8 +55,12 @@ pub struct Editor {
     pub clipboard: String,
     pub git_branch: Option<String>,
     pub diff_hunks: Vec<DiffHunk>,
+    pub lsp_diagnostics: DiagnosticState,
+    pub lsp_cursor_index: usize,
     diff_base: Option<String>,
     git_repo: Option<GitRepo>,
+    language_config: Option<Config>,
+    lsp_session: Option<LspSession>,
     buffer_version: u64,
     saved_buffer_version: u64,
     cached_text: String,
@@ -66,7 +72,12 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(text: &str, file_path: Option<&Path>, theme: Theme) -> Self {
+    pub fn new(
+        text: &str,
+        file_path: Option<&Path>,
+        theme: Theme,
+        language_config: Option<Config>,
+    ) -> Self {
         let mut highlighter = SyntaxHighlighter::new(theme.clone());
         if let Some(path) = file_path {
             if let Some(path_str) = path.to_str() {
@@ -104,8 +115,12 @@ impl Editor {
             clipboard: String::new(),
             git_branch,
             diff_hunks: Vec::new(),
+            lsp_diagnostics: DiagnosticState::default(),
+            lsp_cursor_index: 0,
             diff_base,
             git_repo,
+            language_config,
+            lsp_session: None,
             buffer_version: 0,
             saved_buffer_version: 0,
             cached_text: text.to_string(),
@@ -121,8 +136,70 @@ impl Editor {
         if let Some(ref path) = self.current_file {
             std::fs::write(path, self.buffer.to_string())?;
             self.saved_buffer_version = self.buffer_version;
+            self.refresh_lsp();
         }
         Ok(())
+    }
+
+    pub fn refresh_lsp(&mut self) {
+        if let Some(session) = self.lsp_session.as_mut() {
+            session.did_change(&self.buffer.to_string());
+            session.poll();
+            self.lsp_diagnostics = session.diagnostics.clone();
+        }
+    }
+
+    fn restart_lsp(&mut self, path: &Path) {
+        self.lsp_session = None;
+        self.lsp_diagnostics.clear();
+        self.lsp_cursor_index = 0;
+
+        let Some(config) = self.language_config.as_ref() else {
+            return;
+        };
+        let Some(file_path) = path.to_str() else {
+            return;
+        };
+        let Some(language) = config.language_for_file(file_path) else {
+            return;
+        };
+        let Some(lsp) = language.lsp.as_ref() else {
+            return;
+        };
+        let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        if let Ok(session) =
+            LspSession::start(lsp, root_dir, &language.name, path, &self.buffer.to_string())
+        {
+            self.lsp_session = Some(session);
+        }
+    }
+
+    pub fn diagnostic_on_cursor_line(&self) -> Option<&[crate::lsp::Diagnostic]> {
+        let line = self.buffer.char_to_line(self.cursor);
+        let diagnostics = self.lsp_diagnostics.diagnostics_at(line);
+        if diagnostics.is_empty() {
+            None
+        } else {
+            Some(diagnostics)
+        }
+    }
+
+    pub fn active_diagnostic(&self) -> Option<&crate::lsp::Diagnostic> {
+        let diagnostics = self.diagnostic_on_cursor_line()?;
+        diagnostics.get(self.lsp_cursor_index % diagnostics.len())
+    }
+
+    pub fn cycle_active_diagnostic(&mut self, delta: isize) {
+        let Some(diagnostics) = self.diagnostic_on_cursor_line() else {
+            self.lsp_cursor_index = 0;
+            return;
+        };
+        if diagnostics.is_empty() {
+            self.lsp_cursor_index = 0;
+            return;
+        }
+        let len = diagnostics.len() as isize;
+        self.lsp_cursor_index = ((self.lsp_cursor_index as isize + delta).rem_euclid(len)) as usize;
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -135,7 +212,7 @@ impl Editor {
     }
 
     pub fn undo(&mut self) {
-        if let Some((buffer, cursor)) = self.undo_stack.pop() {
+        if let Some((buffer, _cursor)) = self.undo_stack.pop() {
             self.redo_stack.push((self.buffer.clone(), self.cursor));
             self.buffer = buffer;
             self.cursor = self.cursor.min(self.buffer.len_chars());
@@ -373,6 +450,7 @@ impl Editor {
                 self.buffer.insert_char(self.cursor + 1, close);
                 self.cursor += 1;
                 self.buffer_version = self.buffer_version.wrapping_add(1);
+                self.refresh_lsp();
                 return;
             }
         }
@@ -390,6 +468,7 @@ impl Editor {
         self.buffer.insert_char(self.cursor, c);
         self.cursor += 1;
         self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.refresh_lsp();
     }
 
     pub fn insert_tab(&mut self) {
@@ -576,6 +655,7 @@ impl Editor {
         if let Some(path_str) = path.to_str() {
             self.highlighter.load_language_for_path(path_str);
         }
+        self.restart_lsp(path);
         let repo = GitRepo::discover(path);
         self.git_repo = repo;
         self.git_branch = self.git_repo.as_ref().and_then(|r| r.current_branch());
@@ -636,6 +716,7 @@ impl Editor {
                 self.buffer.remove(start..end);
                 self.cursor = start;
                 self.buffer_version = self.buffer_version.wrapping_add(1);
+                self.refresh_lsp();
             }
         }
         self.exit_visual_mode();
@@ -658,6 +739,7 @@ impl Editor {
         self.buffer.insert(self.cursor, text);
         self.cursor += text.chars().count();
         self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.refresh_lsp();
     }
 
     pub fn paste_clipboard(&mut self) {
@@ -825,7 +907,7 @@ mod tests {
     #[test]
     fn insert_tab_expands_to_spaces() {
         let theme = Theme::default_theme();
-        let mut editor = Editor::new("", None, theme);
+        let mut editor = Editor::new("", None, theme, None);
 
         editor.insert_tab();
 
@@ -836,7 +918,7 @@ mod tests {
     #[test]
     fn split_bracket_pair_inserts_multiline_block() {
         let theme = Theme::default_theme();
-        let mut editor = Editor::new("()", None, theme);
+        let mut editor = Editor::new("()", None, theme, None);
         editor.cursor = 1;
 
         assert!(editor.split_bracket_pair_at_cursor());
@@ -847,7 +929,7 @@ mod tests {
     #[test]
     fn split_bracket_pair_returns_false_outside_pair() {
         let theme = Theme::default_theme();
-        let mut editor = Editor::new("abc", None, theme);
+        let mut editor = Editor::new("abc", None, theme, None);
         editor.cursor = 1;
 
         assert!(!editor.split_bracket_pair_at_cursor());

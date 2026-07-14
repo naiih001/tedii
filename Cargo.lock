@@ -2730,6 +2730,7 @@ dependencies = [
  "reqwest",
  "ropey",
  "serde",
+ "serde_json",
  "toml",
  "tree-sitter",
 ]
