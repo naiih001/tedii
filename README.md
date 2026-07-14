@@ -20,3 +20,8 @@
 ### Phase 3: Polish
 - Configuration (TOML).
 - Plugin system (WASM).
+
+## Releases
+- Releases are managed from the `release` branch.
+- `release-plz` opens and updates release PRs, generates changelog entries, and tags releases.
+- Tagged releases build Linux and macOS release archives automatically.
