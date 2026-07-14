@@ -131,7 +131,6 @@ impl GitPicker {
             let entry = &self.entries[idx];
             let selected = idx == self.selection;
 
-            let prefix = if selected { ">" } else { " " };
             let base_style = if selected {
                 self.theme.ui_get("git_selected")
             } else {
