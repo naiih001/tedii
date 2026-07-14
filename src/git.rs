@@ -23,6 +23,7 @@ pub enum FileChange {
         path: PathBuf,
     },
     Renamed {
+        #[allow(dead_code)]
         from_path: PathBuf,
         to_path: PathBuf,
     },
