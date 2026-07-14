@@ -99,15 +99,25 @@ impl FuzzyFinder {
     }
 
     pub fn navigate_up(&mut self) {
-        if self.selection > 0 {
-            self.selection -= 1;
+        if self.entries.is_empty() {
+            return;
         }
+        self.selection = if self.selection == 0 {
+            self.entries.len() - 1
+        } else {
+            self.selection - 1
+        };
     }
 
     pub fn navigate_down(&mut self) {
-        if !self.entries.is_empty() && self.selection < self.entries.len() - 1 {
-            self.selection += 1;
+        if self.entries.is_empty() {
+            return;
         }
+        self.selection = if self.selection + 1 >= self.entries.len() {
+            0
+        } else {
+            self.selection + 1
+        };
     }
 
     pub fn enter(&mut self) -> Option<PathBuf> {
@@ -375,5 +385,55 @@ fn walk_dir(base: &Path, dir: &Path, entries: &mut Vec<ScoredEntry>) {
                 walk_dir(base, &path, entries);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finder_with_entries(count: usize) -> FuzzyFinder {
+        let mut finder = FuzzyFinder::new(Theme::default_theme());
+        finder.entries = (0..count)
+            .map(|i| ScoredEntry {
+                path: PathBuf::from(format!("file{i}")),
+                display: format!("file{i}"),
+                is_dir: false,
+                score: 0,
+                indices: Vec::new(),
+            })
+            .collect();
+        finder
+    }
+
+    #[test]
+    fn navigate_up_wraps_to_bottom() {
+        let mut finder = finder_with_entries(3);
+        finder.selection = 0;
+
+        finder.navigate_up();
+
+        assert_eq!(finder.selection, 2);
+    }
+
+    #[test]
+    fn navigate_down_wraps_to_top() {
+        let mut finder = finder_with_entries(3);
+        finder.selection = 2;
+
+        finder.navigate_down();
+
+        assert_eq!(finder.selection, 0);
+    }
+
+    #[test]
+    fn navigate_wraps_in_single_entry_list() {
+        let mut finder = finder_with_entries(1);
+
+        finder.navigate_up();
+        assert_eq!(finder.selection, 0);
+
+        finder.navigate_down();
+        assert_eq!(finder.selection, 0);
     }
 }
