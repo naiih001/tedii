@@ -23,6 +23,12 @@ fn matching_pair(c: char) -> Option<char> {
     }
 }
 
+fn lsp_root_dir(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
     #[default]
@@ -198,7 +204,7 @@ impl Editor {
             ));
             return;
         };
-        let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let root_dir = lsp_root_dir(path);
         crate::lsp::log_line(format!(
             "[editor] matched language={} command={} args={:?}",
             language.name, lsp.command, lsp.args
@@ -953,6 +959,11 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_file_name_uses_current_directory_as_lsp_root() {
+        assert_eq!(lsp_root_dir(Path::new("main.ts")), Path::new("."));
+    }
 
     #[test]
     fn insert_tab_expands_to_spaces() {
