@@ -73,7 +73,25 @@ fn main() -> Result<()> {
         }
     }
 
-    let language_config = load_config().ok();
+    crate::lsp::log_line(format!(
+        "[main] startup args={:?} file_path={:?} start_dir={:?}",
+        args, file_path, start_dir
+    ));
+
+    let language_config = match load_config() {
+        Ok(config) => {
+            crate::lsp::log_line(format!(
+                "[main] loaded languages.toml with {} languages and {} grammars",
+                config.languages.len(),
+                config.grammars.len()
+            ));
+            Some(config)
+        }
+        Err(err) => {
+            crate::lsp::log_line(format!("[main] failed to load languages.toml: {}", err));
+            None
+        }
+    };
     let mut theme = Theme::default_theme();
     if let Some(theme_config) = load_theme_config() {
         theme.apply_config(theme_config);
@@ -86,9 +104,14 @@ fn main() -> Result<()> {
         .unwrap_or(true);
 
     let file_content = if let Some(ref path) = file_path {
+        crate::lsp::log_line(format!("[main] opening file {}", path.display()));
         match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                crate::lsp::log_line(format!(
+                    "[main] file not found, creating {}",
+                    path.display()
+                ));
                 if let Err(e) = std::fs::File::create(path) {
                     eprintln!("Error creating file {}: {}", path.display(), e);
                     std::process::exit(1);
@@ -101,6 +124,7 @@ fn main() -> Result<()> {
             }
         }
     } else {
+        crate::lsp::log_line("[main] no file argument supplied; using welcome buffer");
         "Welcome to tedii!\nModal editing implemented.\nh,j,k,l to move.\ni for insert.\nEsc for Normal.".to_string()
     };
 
@@ -127,6 +151,8 @@ fn main() -> Result<()> {
     }
 
     while !editor.should_quit {
+        editor.refresh_lsp();
+
         let cursor_style = match editor.mode {
             Mode::Normal | Mode::Visual => SetCursorStyle::SteadyBlock,
             Mode::Insert => SetCursorStyle::SteadyBar,
@@ -630,6 +656,8 @@ fn main() -> Result<()> {
                 }
             }
         }
+
+        editor.refresh_lsp();
     }
 
     Tui::restore()?;

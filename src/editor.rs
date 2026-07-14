@@ -63,6 +63,7 @@ pub struct Editor {
     lsp_session: Option<LspSession>,
     buffer_version: u64,
     saved_buffer_version: u64,
+    last_lsp_sync_version: u64,
     cached_text: String,
     cached_highlights: Vec<(usize, usize, Style)>,
     cached_highlight_version: u64,
@@ -94,7 +95,7 @@ impl Editor {
                 Some((Some(repo), branch, base))
             })
             .unwrap_or((None, None, None));
-        Self {
+        let mut editor = Self {
             buffer: Rope::from_str(text),
             cursor: 0,
             scroll_x: 0,
@@ -123,13 +124,20 @@ impl Editor {
             lsp_session: None,
             buffer_version: 0,
             saved_buffer_version: 0,
+            last_lsp_sync_version: 0,
             cached_text: text.to_string(),
             cached_highlights: Vec::new(),
             cached_highlight_version: 1, // Force initial highlight on first render
             cached_char_styles: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+        };
+
+        if let Some(path) = file_path {
+            editor.restart_lsp(path);
         }
+
+        editor
     }
 
     pub fn save(&mut self) -> anyhow::Result<()> {
@@ -143,7 +151,10 @@ impl Editor {
 
     pub fn refresh_lsp(&mut self) {
         if let Some(session) = self.lsp_session.as_mut() {
-            session.did_change(&self.buffer.to_string());
+            if self.buffer_version != self.last_lsp_sync_version {
+                session.did_change(&self.buffer.to_string());
+                self.last_lsp_sync_version = self.buffer_version;
+            }
             session.poll();
             self.lsp_diagnostics = session.diagnostics.clone();
         }
@@ -153,24 +164,63 @@ impl Editor {
         self.lsp_session = None;
         self.lsp_diagnostics.clear();
         self.lsp_cursor_index = 0;
+        self.last_lsp_sync_version = self.buffer_version;
+        crate::lsp::log_line(format!(
+            "[editor] selecting LSP for file={} buffer_version={}",
+            path.display(),
+            self.buffer_version
+        ));
 
         let Some(config) = self.language_config.as_ref() else {
+            crate::lsp::log_line("[editor] no languages.toml loaded; skipping LSP");
             return;
         };
         let Some(file_path) = path.to_str() else {
+            crate::lsp::log_line(format!(
+                "[editor] file path is not valid UTF-8; skipping LSP for {}",
+                path.display()
+            ));
             return;
         };
         let Some(language) = config.language_for_file(file_path) else {
+            crate::lsp::log_line(format!(
+                "[editor] no language matched file={} from {} configured languages",
+                path.display(),
+                config.languages.len()
+            ));
             return;
         };
         let Some(lsp) = language.lsp.as_ref() else {
+            crate::lsp::log_line(format!(
+                "[editor] language={} matched file={} but has no LSP config",
+                language.name,
+                path.display()
+            ));
             return;
         };
         let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        if let Ok(session) =
-            LspSession::start(lsp, root_dir, &language.name, path, &self.buffer.to_string())
-        {
-            self.lsp_session = Some(session);
+        crate::lsp::log_line(format!(
+            "[editor] matched language={} command={} args={:?}",
+            language.name, lsp.command, lsp.args
+        ));
+        match LspSession::start(lsp, root_dir, &language.name, path, &self.buffer.to_string()) {
+            Ok(session) => {
+                self.lsp_session = Some(session);
+                crate::lsp::log_line(format!(
+                    "[editor] LSP session attached for file={} language={}",
+                    path.display(),
+                    language.name
+                ));
+            }
+            Err(err) => {
+                crate::lsp::log_line(format!(
+                    "[editor] LSP startup failed for file={} language={} error={}",
+                    path.display(),
+                    language.name,
+                    err
+                ));
+                eprintln!("LSP startup failed for {}: {}", language.name, err);
+            }
         }
     }
 
