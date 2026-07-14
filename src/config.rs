@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct LanguageConfig {
     pub name: String,
@@ -13,12 +14,14 @@ pub struct LanguageConfig {
     pub highlights: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct GrammarDef {
     pub name: String,
     pub source: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(rename = "language", default)]
@@ -27,6 +30,7 @@ pub struct Config {
     pub grammars: Vec<GrammarDef>,
 }
 
+#[allow(dead_code)]
 impl Config {
     pub fn grammar_path(&self, name: &str) -> Option<PathBuf> {
         let _grammar = self.grammars.iter().find(|g| g.name == name)?;
