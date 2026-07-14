@@ -338,6 +338,8 @@ Detailed architecture notes live in the `docs/arch/` directory:
 Those documents explain implementation details; this README focuses on using the editor.
 
 ## Releases
+=======
+>>>>>>> main
 - Releases are managed from the `release` branch.
 - `release-plz` opens and updates release PRs, generates changelog entries, and tags releases.
 - Tagged releases build Linux and macOS release archives automatically.
