@@ -10,7 +10,7 @@ mod theme;
 mod tui;
 
 use anyhow::Result;
-use config::{load_theme_config, load_keybindings_config};
+use config::{load_keybindings_config, load_theme_config};
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -523,13 +523,12 @@ fn main() -> Result<()> {
                             }
                             _ => {}
                         },
-                        Mode::Fuzzy => match key.code {
-                            KeyCode::Esc => {
+                        Mode::Fuzzy => {
+                            if key.code == KeyCode::Esc {
                                 fuzzy_finder.visible = false;
                                 editor.mode = Mode::Normal;
                             }
-                            _ => {}
-                        },
+                        }
                         Mode::Visual => {
                             if editor.pending_g {
                                 match key.code {
