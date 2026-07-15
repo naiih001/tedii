@@ -5,6 +5,7 @@ mod fuzzy_finder;
 mod git;
 mod git_picker;
 mod grammar_commands;
+mod hover;
 mod lsp;
 mod syntax;
 mod theme;
