@@ -286,16 +286,8 @@ impl LspSession {
     }
 
     pub fn request_hover(&mut self, line: usize, character: usize) -> Result<u64> {
-        self.send_request(
-            "textDocument/hover",
-            json!({
-                "textDocument": { "uri": self.current_uri },
-                "position": {
-                    "line": line,
-                    "character": character,
-                }
-            }),
-        )
+        let params = hover_params(&self.current_uri, line, character);
+        self.send_request("textDocument/hover", params)
     }
 
     pub fn poll(&mut self) {
@@ -508,6 +500,13 @@ fn parse_response(value: &serde_json::Value) -> Option<(u64, LspResponse)> {
     Some((id, LspResponse::Success(result.clone())))
 }
 
+fn hover_params(uri: &str, line: usize, character: usize) -> serde_json::Value {
+    json!({
+        "textDocument": { "uri": uri },
+        "position": { "line": line, "character": character }
+    })
+}
+
 fn to_file_uri(path: &Path) -> String {
     let path = if path.is_absolute() {
         path.to_path_buf()
@@ -597,6 +596,17 @@ mod tests {
                 "params": {}
             })),
             None
+        );
+    }
+
+    #[test]
+    fn hover_params_include_uri_and_utf16_position() {
+        assert_eq!(
+            hover_params("file:///tmp/main.rs", 3, 7),
+            json!({
+                "textDocument": { "uri": "file:///tmp/main.rs" },
+                "position": { "line": 3, "character": 7 }
+            })
         );
     }
 
