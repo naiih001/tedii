@@ -309,9 +309,12 @@ impl Editor {
         }
     }
 
-    pub fn active_diagnostic(&self) -> Option<&crate::lsp::Diagnostic> {
+    pub fn active_diagnostic_with_position(
+        &self,
+    ) -> Option<(&crate::lsp::Diagnostic, usize, usize)> {
         let diagnostics = self.diagnostic_on_cursor_line()?;
-        diagnostics.get(self.lsp_cursor_index % diagnostics.len())
+        let index = self.lsp_cursor_index % diagnostics.len();
+        Some((&diagnostics[index], index + 1, diagnostics.len()))
     }
 
     pub fn cycle_active_diagnostic(&mut self, delta: isize) {
@@ -1171,5 +1174,23 @@ mod tests {
         apply_diagnostic_underlines(&buffer, &diagnostics, &mut styles, &theme);
 
         assert_eq!(styles, vec![Style::default()]);
+    }
+
+    #[test]
+    fn active_diagnostic_reports_one_based_position_and_wraps() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("value\n", None, theme, None);
+        editor.lsp_diagnostics.update(vec![
+            diagnostic(DiagnosticSeverity::Error, 0, 0, 0, 1),
+            diagnostic(DiagnosticSeverity::Warning, 0, 1, 0, 2),
+        ]);
+
+        let (_, position, total) = editor.active_diagnostic_with_position().unwrap();
+        assert_eq!((position, total), (1, 2));
+
+        editor.cycle_active_diagnostic(-1);
+
+        let (_, position, total) = editor.active_diagnostic_with_position().unwrap();
+        assert_eq!((position, total), (2, 2));
     }
 }

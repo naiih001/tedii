@@ -307,10 +307,9 @@ fn main() -> Result<()> {
                 status_chunks[1],
             );
 
-            if let Some(diagnostic) = editor.active_diagnostic() {
-                let popup_text = vec![Line::from(vec![Span::raw(format!(
-                    "{:?}: {}",
-                    diagnostic.severity, diagnostic.message
+            if let Some((diagnostic, position, total)) = editor.active_diagnostic_with_position() {
+                let popup_text = vec![Line::from(vec![Span::raw(format_diagnostic_popup_line(
+                    diagnostic, position, total,
                 ))])];
                 let popup_width = popup_text
                     .iter()
@@ -662,4 +661,39 @@ fn main() -> Result<()> {
 
     Tui::restore()?;
     Ok(())
+}
+
+fn format_diagnostic_popup_line(
+    diagnostic: &crate::lsp::Diagnostic,
+    position: usize,
+    total: usize,
+) -> String {
+    format!(
+        "[{position}/{total}] {:?}: {}",
+        diagnostic.severity, diagnostic.message
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_diagnostic_popup_line;
+    use crate::lsp::{Diagnostic, DiagnosticSeverity};
+
+    #[test]
+    fn diagnostic_popup_line_includes_position_total_severity_and_message() {
+        let diagnostic = Diagnostic {
+            severity: DiagnosticSeverity::Error,
+            message: "missing semicolon".into(),
+            source: None,
+            line: 0,
+            character: 0,
+            end_line: 0,
+            end_character: 1,
+        };
+
+        assert_eq!(
+            format_diagnostic_popup_line(&diagnostic, 1, 5),
+            "[1/5] Error: missing semicolon"
+        );
+    }
 }
