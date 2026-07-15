@@ -97,6 +97,13 @@ fn normalize_markdown(input: &str) -> String {
         .join("\n")
 }
 
+fn is_emphasis_boundary(character: Option<&char>) -> bool {
+    match character {
+        None => true,
+        Some(character) => character.is_whitespace() || character.is_ascii_punctuation(),
+    }
+}
+
 fn normalize_inline(input: &str) -> String {
     let chars = input.chars().collect::<Vec<_>>();
     let mut output = String::new();
@@ -135,12 +142,15 @@ fn normalize_inline(input: &str) -> String {
         }
 
         if matches!(chars[index], '*' | '_') {
-            let previous_is_alphanumeric = index
+            let previous = index
                 .checked_sub(1)
-                .and_then(|previous| chars.get(previous))
-                .is_some_and(|ch| ch.is_alphanumeric());
-            let next_is_alphanumeric = chars.get(index + 1).is_some_and(|ch| ch.is_alphanumeric());
-            if previous_is_alphanumeric != next_is_alphanumeric {
+                .and_then(|previous| chars.get(previous));
+            let next = chars.get(index + 1);
+            let previous_is_alphanumeric = previous.is_some_and(|ch| ch.is_alphanumeric());
+            let next_is_alphanumeric = next.is_some_and(|ch| ch.is_alphanumeric());
+            if (previous_is_alphanumeric && is_emphasis_boundary(next))
+                || (is_emphasis_boundary(previous) && next_is_alphanumeric)
+            {
                 index += 1;
                 continue;
             }
@@ -210,6 +220,18 @@ mod tests {
                 "contents": "Use a*b, a_b, *bold*, and _italic_."
             }))),
             Ok(Some("Use a*b, a_b, bold, and italic.".into()))
+        );
+    }
+
+    #[test]
+    fn symbol_adjacent_markers_are_not_emphasis_boundaries() {
+        assert_eq!(
+            parse_hover_response(LspResponse::Success(json!({
+                "contents": "Keep x*√y, name_♥, and snake_case; strip *bold* and _italic_."
+            }))),
+            Ok(Some(
+                "Keep x*√y, name_♥, and snake_case; strip bold and italic.".into()
+            ))
         );
     }
 
