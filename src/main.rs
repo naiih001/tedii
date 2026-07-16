@@ -555,7 +555,7 @@ fn main() -> Result<()> {
                                     KeyCode::Char('q') if leader_keys_enabled => {
                                         editor.should_quit = true;
                                     }
-                                    KeyCode::Char('K') => editor.request_hover(),
+                                    KeyCode::Char('k') => editor.request_hover(),
                                     _ => {}
                                 }
                             } else {

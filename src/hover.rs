@@ -54,16 +54,14 @@ pub fn parse_hover_response(response: LspResponse) -> Result<Option<String>, Val
     let Some(contents) = value.get("contents") else {
         return Ok(None);
     };
-    let normalized = parse_contents(contents)
-        .map(|text| normalize_markdown(&text))
-        .unwrap_or_default();
+    let normalized = parse_contents(contents).unwrap_or_default();
     let normalized = normalized.trim().to_string();
     Ok((!normalized.is_empty()).then_some(normalized))
 }
 
 fn parse_contents(value: &Value) -> Option<String> {
     match value {
-        Value::String(text) => Some(text.clone()),
+        Value::String(_) => parse_marked_string(value),
         Value::Array(items) => {
             let parts = items
                 .iter()
@@ -79,11 +77,19 @@ fn parse_contents(value: &Value) -> Option<String> {
 
 fn parse_marked_string(value: &Value) -> Option<String> {
     match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Object(object) => object
-            .get("value")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        Value::String(text) => Some(normalize_markdown(text)),
+        Value::Object(object) => {
+            let text = object.get("value").and_then(Value::as_str)?;
+            match object.get("kind").and_then(Value::as_str) {
+                Some("markdown") => Some(normalize_markdown(text)),
+                Some("plaintext") => Some(text.to_string()),
+                Some(_) => None,
+                None if object.get("language").and_then(Value::as_str).is_some() => {
+                    Some(text.to_string())
+                }
+                None => None,
+            }
+        }
         _ => None,
     }
 }
@@ -192,6 +198,31 @@ mod tests {
             }))),
             Ok(Some(
                 "fn len(&self) -> usize\n\nReturns the length (https://example.test/len).".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn preserves_plaintext_and_language_marked_strings() {
+        assert_eq!(
+            parse_hover_response(LspResponse::Success(json!({
+                "contents": {
+                    "kind": "plaintext",
+                    "value": "Keep `ticks` and * literal markers."
+                }
+            }))),
+            Ok(Some("Keep `ticks` and * literal markers.".into()))
+        );
+
+        assert_eq!(
+            parse_hover_response(LspResponse::Success(json!({
+                "contents": {
+                    "language": "rust",
+                    "value": "fn pointer(value: *mut i32) -> snake_case"
+                }
+            }))),
+            Ok(Some(
+                "fn pointer(value: *mut i32) -> snake_case".into()
             ))
         );
     }
