@@ -15,7 +15,7 @@
 ### Phase 2: Core
 - Syntax highlighting (tree-sitter).
 - Basic LSP diagnostics.
-- LSP hover documentation with `Space K`; scroll with `Alt-j` / `Alt-k`.
+- LSP hover documentation with `Space k`; scroll with `Alt-j` / `Alt-k`.
 - Undo/redo.
 
 ### Phase 3: Polish

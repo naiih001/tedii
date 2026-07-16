@@ -6,7 +6,7 @@ Add keyboard-triggered LSP hover documentation to the editor without blocking in
 
 ## User Interaction
 
-- `Space K` in Normal mode requests hover documentation for the symbol under the cursor.
+- `Space k` in Normal mode requests hover documentation for the symbol under the cursor.
 - Hover content appears in a bordered popup in the lower-right of the editor viewport.
 - The popup takes precedence over the existing diagnostic popup. Closing hover allows the diagnostic popup to appear again.
 - `Alt-j` and `Alt-k` scroll the hover content by one rendered line.
@@ -26,7 +26,7 @@ Initialization will use the same response representation but will consume its ex
 
 ## Hover Request Lifecycle
 
-The editor will track one pending hover request ID. `Space K` will:
+The editor will track one pending hover request ID. `Space k` will:
 
 1. Clear the currently displayed hover and reset its scroll offset.
 2. Convert the current Rope cursor position to a zero-based LSP line and UTF-16 character offset.
