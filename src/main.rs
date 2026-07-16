@@ -33,6 +33,64 @@ use std::path::PathBuf;
 use theme::Theme;
 use tui::Tui;
 
+#[derive(Debug, PartialEq, Eq)]
+struct HoverPopupMetrics {
+    area: ratatui::layout::Rect,
+    max_scroll: u16,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PopupKind {
+    None,
+    Diagnostic,
+    Hover,
+}
+
+fn popup_kind(hover_visible: bool, diagnostic_present: bool) -> PopupKind {
+    if hover_visible {
+        PopupKind::Hover
+    } else if diagnostic_present {
+        PopupKind::Diagnostic
+    } else {
+        PopupKind::None
+    }
+}
+
+fn cursor_changed(before: usize, after: usize) -> bool {
+    before != after
+}
+
+fn hover_popup_metrics(text: &str, area: ratatui::layout::Rect) -> Option<HoverPopupMetrics> {
+    if text.trim().is_empty() || area.width < 3 || area.height < 3 {
+        return None;
+    }
+    let longest = text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = ((longest + 2) as u16).clamp(3, area.width.min(80));
+    let inner_width = width.saturating_sub(2).max(1) as usize;
+    let wrapped_lines = text
+        .lines()
+        .map(|line| line.chars().count().max(1).div_ceil(inner_width))
+        .sum::<usize>()
+        .max(1);
+    let height_cap = (area.height / 2).max(3).min(area.height);
+    let height = ((wrapped_lines + 2) as u16).clamp(3, height_cap);
+    let inner_height = height.saturating_sub(2) as usize;
+    let max_scroll = wrapped_lines.saturating_sub(inner_height) as u16;
+    Some(HoverPopupMetrics {
+        area: ratatui::layout::Rect {
+            x: area.x + area.width - width,
+            y: area.y + area.height - height,
+            width,
+            height,
+        },
+        max_scroll,
+    })
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut file_path: Option<PathBuf> = None;
@@ -308,32 +366,51 @@ fn main() -> Result<()> {
                 status_chunks[1],
             );
 
-            if let Some(diagnostic) = editor.active_diagnostic() {
-                let popup_text = vec![Line::from(vec![Span::raw(format!(
-                    "{:?}: {}",
-                    diagnostic.severity, diagnostic.message
-                ))])];
-                let popup_width = popup_text
-                    .iter()
-                    .map(|line| line.width() as u16)
-                    .max()
-                    .unwrap_or(0)
-                    .min(content_area.width.saturating_sub(2));
-                let popup_height = popup_text.len() as u16 + 2;
-                let popup_area = ratatui::layout::Rect {
-                    x: content_area
-                        .x
-                        .saturating_add(content_area.width.saturating_sub(popup_width + 2)),
-                    y: content_area
-                        .y
-                        .saturating_add(content_area.height.saturating_sub(popup_height + 1)),
-                    width: popup_width + 2,
-                    height: popup_height,
-                };
-                f.render_widget(
-                    Paragraph::new(popup_text).block(ratatui::widgets::Block::bordered()),
-                    popup_area,
-                );
+            match popup_kind(editor.hover.visible, editor.active_diagnostic().is_some()) {
+                PopupKind::Hover => {
+                    if let Some(metrics) = hover_popup_metrics(&editor.hover.text, content_area) {
+                        editor.hover.max_scroll = metrics.max_scroll;
+                        editor.hover.scroll = editor.hover.scroll.min(metrics.max_scroll);
+                        let block = ratatui::widgets::Block::bordered()
+                            .border_style(editor.theme.ui_get("hover_border"));
+                        let popup = Paragraph::new(editor.hover.text.clone())
+                            .style(editor.theme.ui_get("hover_text"))
+                            .block(block)
+                            .wrap(ratatui::widgets::Wrap { trim: false })
+                            .scroll((editor.hover.scroll, 0));
+                        f.render_widget(popup, metrics.area);
+                    }
+                }
+                PopupKind::Diagnostic => {
+                    if let Some(diagnostic) = editor.active_diagnostic() {
+                        let popup_text = vec![Line::from(vec![Span::raw(format!(
+                            "{:?}: {}",
+                            diagnostic.severity, diagnostic.message
+                        ))])];
+                        let popup_width = popup_text
+                            .iter()
+                            .map(|line| line.width() as u16)
+                            .max()
+                            .unwrap_or(0)
+                            .min(content_area.width.saturating_sub(2));
+                        let popup_height = popup_text.len() as u16 + 2;
+                        let popup_area = ratatui::layout::Rect {
+                            x: content_area
+                                .x
+                                .saturating_add(content_area.width.saturating_sub(popup_width + 2)),
+                            y: content_area.y.saturating_add(
+                                content_area.height.saturating_sub(popup_height + 1),
+                            ),
+                            width: popup_width + 2,
+                            height: popup_height,
+                        };
+                        f.render_widget(
+                            Paragraph::new(popup_text).block(ratatui::widgets::Block::bordered()),
+                            popup_area,
+                        );
+                    }
+                }
+                PopupKind::None => {}
             }
 
             file_explorer.render(f, area);
@@ -418,6 +495,26 @@ fn main() -> Result<()> {
                     fuzzy_finder.toggle();
                     editor.mode = Mode::Fuzzy;
                 } else {
+                    if editor.hover.visible
+                        && key.code == KeyCode::Char('j')
+                        && key.modifiers == KeyModifiers::ALT
+                    {
+                        editor.scroll_hover(1);
+                        continue;
+                    }
+                    if editor.hover.visible
+                        && key.code == KeyCode::Char('k')
+                        && key.modifiers == KeyModifiers::ALT
+                    {
+                        editor.scroll_hover(-1);
+                        continue;
+                    }
+                    if editor.hover.visible && key.code == KeyCode::Esc {
+                        editor.dismiss_hover();
+                        continue;
+                    }
+
+                    let cursor_before = editor.cursor;
                     match editor.mode {
                         Mode::Normal => {
                             if editor.pending_g {
@@ -458,6 +555,7 @@ fn main() -> Result<()> {
                                     KeyCode::Char('q') if leader_keys_enabled => {
                                         editor.should_quit = true;
                                     }
+                                    KeyCode::Char('K') => editor.request_hover(),
                                     _ => {}
                                 }
                             } else {
@@ -654,6 +752,9 @@ fn main() -> Result<()> {
                             }
                         }
                     }
+                    if cursor_changed(cursor_before, editor.cursor) {
+                        editor.dismiss_hover();
+                    }
                 }
             }
         }
@@ -663,4 +764,47 @@ fn main() -> Result<()> {
 
     Tui::restore()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hover_popup_is_capped_and_reports_scroll_range() {
+        let area = ratatui::layout::Rect::new(10, 5, 100, 20);
+        let text = (0..20)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let metrics = hover_popup_metrics(&text, area).unwrap();
+
+        assert!(metrics.area.width <= 80);
+        assert!(metrics.area.height <= 10);
+        assert_eq!(metrics.area.x + metrics.area.width, area.x + area.width);
+        assert_eq!(metrics.area.y + metrics.area.height, area.y + area.height);
+        assert!(metrics.max_scroll > 0);
+    }
+
+    #[test]
+    fn hover_popup_returns_none_for_unusable_area_or_empty_text() {
+        assert_eq!(
+            hover_popup_metrics("", ratatui::layout::Rect::new(0, 0, 80, 20)),
+            None
+        );
+        assert_eq!(
+            hover_popup_metrics("docs", ratatui::layout::Rect::new(0, 0, 2, 2)),
+            None
+        );
+    }
+
+    #[test]
+    fn hover_has_popup_precedence_and_cursor_changes_dismiss_it() {
+        assert_eq!(popup_kind(true, true), PopupKind::Hover);
+        assert_eq!(popup_kind(false, true), PopupKind::Diagnostic);
+        assert_eq!(popup_kind(false, false), PopupKind::None);
+        assert!(cursor_changed(4, 5));
+        assert!(!cursor_changed(4, 4));
+    }
 }
