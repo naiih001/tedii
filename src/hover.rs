@@ -221,9 +221,7 @@ mod tests {
                     "value": "fn pointer(value: *mut i32) -> snake_case"
                 }
             }))),
-            Ok(Some(
-                "fn pointer(value: *mut i32) -> snake_case".into()
-            ))
+            Ok(Some("fn pointer(value: *mut i32) -> snake_case".into()))
         );
     }
 
