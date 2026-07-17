@@ -527,6 +527,10 @@ fn main() -> Result<()> {
                                     KeyCode::Char('b') => editor.move_word_backward(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char(' ') => editor.pending_space = true,
+                                    KeyCode::Char('c') => {
+                                        editor.begin_change();
+                                        editor.mode = Mode::Insert;
+                                    }
                                     KeyCode::Char('v') => {
                                         editor.enter_visual_mode();
                                         editor.mode = Mode::Visual;
@@ -646,6 +650,10 @@ fn main() -> Result<()> {
                                     KeyCode::Char('d') => {
                                         editor.delete_selection();
                                         editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('c') => {
+                                        editor.begin_change();
+                                        editor.mode = Mode::Insert;
                                     }
                                     _ => {}
                                 }

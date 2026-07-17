@@ -850,6 +850,30 @@ impl Editor {
         self.exit_visual_mode();
     }
 
+    pub fn begin_change(&mut self) {
+        self.begin_undo_group();
+
+        if let Some((start, end)) = self.get_selection_range() {
+            if start < end {
+                self.clipboard = self.buffer.slice(start..end).to_string();
+                self.buffer.remove(start..end);
+                self.cursor = start;
+                self.buffer_version = self.buffer_version.wrapping_add(1);
+                self.refresh_lsp();
+            }
+        } else if self.cursor < self.buffer.len_chars() {
+            let character = self.buffer.char(self.cursor);
+            if character != '\n' {
+                self.clipboard = character.to_string();
+                self.buffer.remove(self.cursor..self.cursor + 1);
+                self.buffer_version = self.buffer_version.wrapping_add(1);
+                self.refresh_lsp();
+            }
+        }
+
+        self.exit_visual_mode();
+    }
+
     fn paste_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
@@ -1192,5 +1216,56 @@ mod tests {
 
         let (_, position, total) = editor.active_diagnostic_with_position().unwrap();
         assert_eq!((position, total), (2, 2));
+    }
+
+    #[test]
+    fn begin_change_removes_character_under_cursor_and_groups_insert_for_undo() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("abc", None, theme, None);
+        editor.cursor = 1;
+
+        editor.begin_change();
+        editor.insert_char('x');
+
+        assert_eq!(editor.buffer.to_string(), "axc");
+        assert_eq!(editor.clipboard, "b");
+        assert_eq!(editor.cursor, 2);
+
+        editor.undo();
+
+        assert_eq!(editor.buffer.to_string(), "abc");
+    }
+
+    #[test]
+    fn begin_change_on_newline_preserves_newline_and_groups_insert_for_undo() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("a\nb", None, theme, None);
+        editor.cursor = 1;
+        editor.clipboard = "saved".into();
+
+        editor.begin_change();
+        editor.insert_char('x');
+
+        assert_eq!(editor.buffer.to_string(), "ax\nb");
+        assert_eq!(editor.clipboard, "saved");
+
+        editor.undo();
+
+        assert_eq!(editor.buffer.to_string(), "a\nb");
+    }
+
+    #[test]
+    fn begin_change_removes_visual_selection_and_clears_selection() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("abcd", None, theme, None);
+        editor.selection_anchor = Some(1);
+        editor.cursor = 2;
+
+        editor.begin_change();
+
+        assert_eq!(editor.buffer.to_string(), "ad");
+        assert_eq!(editor.clipboard, "bc");
+        assert_eq!(editor.cursor, 1);
+        assert_eq!(editor.selection_anchor, None);
     }
 }
