@@ -118,6 +118,7 @@ pub struct Editor {
     pub should_quit: bool,
     pub pending_g: bool,
     pub pending_space: bool,
+    pub pending_z: bool,
     pub command_buffer: String,
     pub current_file: Option<PathBuf>,
     pub highlighter: SyntaxHighlighter,
@@ -179,6 +180,7 @@ impl Editor {
             should_quit: false,
             pending_g: false,
             pending_space: false,
+            pending_z: false,
             command_buffer: String::new(),
             current_file: file_path.map(|p| p.to_path_buf()),
             highlighter,
@@ -1057,6 +1059,20 @@ impl Editor {
             self.scroll_x = col_idx - width + 1;
         }
     }
+
+    pub fn center_cursor(&mut self, height: usize) {
+        let line_idx = self.buffer.char_to_line(self.cursor);
+        let line_count = self.buffer.len_lines();
+
+        if height == 0 || line_count == 0 {
+            return;
+        }
+
+        let half = height / 2;
+        let new_scroll_y = line_idx.saturating_sub(half);
+        let max_scroll = line_count.saturating_sub(height);
+        self.scroll_y = new_scroll_y.min(max_scroll);
+    }
 }
 
 #[cfg(test)]
@@ -1267,5 +1283,60 @@ mod tests {
         assert_eq!(editor.clipboard, "bc");
         assert_eq!(editor.cursor, 1);
         assert_eq!(editor.selection_anchor, None);
+    }
+
+    #[test]
+    fn center_cursor_sets_scroll_y_to_center() {
+        let theme = Theme::default_theme();
+        let text = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let mut editor = Editor::new(&text, None, theme, None);
+        editor.cursor = editor.buffer.line_to_char(50);
+        editor.scroll_y = 0;
+
+        editor.center_cursor(20);
+
+        // cursor line 50, height 20, half = 10 → scroll_y = 50 - 10 = 40
+        assert_eq!(editor.scroll_y, 40);
+    }
+
+    #[test]
+    fn center_cursor_clamps_to_zero_for_cursor_near_top() {
+        let theme = Theme::default_theme();
+        let text = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let mut editor = Editor::new(&text, None, theme, None);
+        editor.cursor = editor.buffer.line_to_char(2);
+        editor.scroll_y = 0;
+
+        editor.center_cursor(20);
+
+        // cursor line 2, half = 10 → 2 - 10 saturates to 0
+        assert_eq!(editor.scroll_y, 0);
+    }
+
+    #[test]
+    fn center_cursor_clamps_when_near_end_of_file() {
+        let theme = Theme::default_theme();
+        let text = (0..20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let mut editor = Editor::new(&text, None, theme, None);
+        editor.cursor = editor.buffer.line_to_char(19);
+        editor.scroll_y = 0;
+
+        editor.center_cursor(20);
+
+        // line_count = 20, height = 20, max_scroll = 0
+        assert_eq!(editor.scroll_y, 0);
+    }
+
+    #[test]
+    fn center_cursor_does_not_change_cursor_position() {
+        let theme = Theme::default_theme();
+        let text = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let mut editor = Editor::new(&text, None, theme, None);
+        let original_cursor = editor.buffer.line_to_char(25);
+        editor.cursor = original_cursor;
+
+        editor.center_cursor(20);
+
+        assert_eq!(editor.cursor, original_cursor);
     }
 }

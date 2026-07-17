@@ -458,6 +458,17 @@ fn main() -> Result<()> {
                                     }
                                     _ => {}
                                 }
+                            } else if editor.pending_z {
+                                editor.pending_z = false;
+                                match key.code {
+                                    KeyCode::Char('z') => {
+                                        let term_size = tui.terminal.size().unwrap_or_default();
+                                        let viewport_height =
+                                            term_size.height.saturating_sub(1) as usize;
+                                        editor.center_cursor(viewport_height);
+                                    }
+                                    _ => {}
+                                }
                             } else {
                                 match key.code {
                                     KeyCode::Char('j')
@@ -527,6 +538,7 @@ fn main() -> Result<()> {
                                     KeyCode::Char('b') => editor.move_word_backward(),
                                     KeyCode::Char('g') => editor.pending_g = true,
                                     KeyCode::Char(' ') => editor.pending_space = true,
+                                    KeyCode::Char('z') => editor.pending_z = true,
                                     KeyCode::Char('c') => {
                                         editor.begin_change();
                                         editor.mode = Mode::Insert;
