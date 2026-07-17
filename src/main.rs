@@ -382,9 +382,9 @@ fn main() -> Result<()> {
                     }
                 }
                 PopupKind::Diagnostic => {
-                    if let Some(diagnostic) = editor.active_diagnostic() {
+                    if let Some((diagnostic, position, total)) = editor.active_diagnostic_with_position() {
                         let popup_text = vec![Line::from(vec![Span::raw(format!(
-                            "{:?}: {}",
+                            "[{position}/{total}] {:?}: {}",
                             diagnostic.severity, diagnostic.message
                         ))])];
                         let popup_width = popup_text
