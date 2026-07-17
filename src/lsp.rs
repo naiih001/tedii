@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use std::time::Duration;
 use crate::config::LspServerConfig;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+const MAX_COMPLETED_RESPONSES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DiagnosticSeverity {
@@ -85,9 +86,42 @@ impl DiagnosticState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum LspResponse {
+    Success(serde_json::Value),
+    Error(serde_json::Value),
+}
+
+#[derive(Default)]
+struct ResponseRegistry {
+    responses: HashMap<u64, LspResponse>,
+    order: VecDeque<u64>,
+}
+
+impl ResponseRegistry {
+    fn insert(&mut self, id: u64, response: LspResponse) {
+        if self.responses.insert(id, response).is_some() {
+            self.order.retain(|stored_id| *stored_id != id);
+        }
+        self.order.push_back(id);
+
+        while self.responses.len() > MAX_COMPLETED_RESPONSES {
+            if let Some(oldest_id) = self.order.pop_front() {
+                self.responses.remove(&oldest_id);
+            }
+        }
+    }
+
+    fn take(&mut self, id: u64) -> Option<LspResponse> {
+        let response = self.responses.remove(&id)?;
+        self.order.retain(|stored_id| *stored_id != id);
+        Some(response)
+    }
+}
+
 enum LspEvent {
     Diagnostics(Vec<Diagnostic>),
-    Response(u64),
+    Response(u64, LspResponse),
 }
 
 pub struct LspSession {
@@ -102,6 +136,7 @@ pub struct LspSession {
     pub diagnostics: DiagnosticState,
     current_uri: String,
     request_id: u64,
+    responses: ResponseRegistry,
     document_version: i32,
 }
 
@@ -162,6 +197,7 @@ impl LspSession {
             diagnostics: DiagnosticState::default(),
             current_uri: to_file_uri(file_path),
             request_id: 1,
+            responses: ResponseRegistry::default(),
             document_version: 0,
         };
         let init_id = session.send_initialize(language_id, root_dir)?;
@@ -245,6 +281,15 @@ impl LspSession {
         let _ = self.send_notification("textDocument/didChange", params);
     }
 
+    pub fn take_response(&mut self, request_id: u64) -> Option<LspResponse> {
+        self.responses.take(request_id)
+    }
+
+    pub fn request_hover(&mut self, line: usize, character: usize) -> Result<u64> {
+        let params = hover_params(&self.current_uri, line, character);
+        self.send_request("textDocument/hover", params)
+    }
+
     pub fn poll(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
@@ -257,8 +302,9 @@ impl LspSession {
                     ));
                     self.diagnostics.update(items)
                 }
-                LspEvent::Response(id) => {
+                LspEvent::Response(id, response) => {
                     log_line(format!("[session {}] <- response id={}", self.session_id, id));
+                    self.responses.insert(id, response);
                 }
             }
         }
@@ -310,14 +356,17 @@ impl LspSession {
         loop {
             match self.rx.recv_timeout(Duration::from_secs(5))? {
                 LspEvent::Diagnostics(items) => self.diagnostics.update(items),
-                LspEvent::Response(id) if id == expected_id => {
+                LspEvent::Response(id, LspResponse::Success(_)) if id == expected_id => {
                     log_line(format!(
                         "[session {}] <- initialize response id={}",
                         self.session_id, id
                     ));
                     return Ok(());
                 }
-                LspEvent::Response(_) => {}
+                LspEvent::Response(id, LspResponse::Error(error)) if id == expected_id => {
+                    anyhow::bail!("LSP request failed: {}", error);
+                }
+                LspEvent::Response(id, response) => self.responses.insert(id, response),
             }
         }
     }
@@ -371,8 +420,8 @@ fn read_messages(stdout: impl Read, tx: mpsc::Sender<LspEvent>) {
         }
         if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) {
             log_line(format!("<- raw message {}", pretty_json(&value)));
-            if let Some(id) = value.get("id").and_then(|v| v.as_u64()) {
-                let _ = tx.send(LspEvent::Response(id));
+            if let Some((id, response)) = parse_response(&value) {
+                let _ = tx.send(LspEvent::Response(id, response));
             }
             if value.get("method").and_then(|m| m.as_str()) == Some("textDocument/publishDiagnostics") {
                 if let Some(params) = value.get("params") {
@@ -442,6 +491,22 @@ fn parse_diagnostics(params: &serde_json::Value) -> Vec<Diagnostic> {
     diagnostics
 }
 
+fn parse_response(value: &serde_json::Value) -> Option<(u64, LspResponse)> {
+    let id = value.get("id")?.as_u64()?;
+    if let Some(error) = value.get("error") {
+        return Some((id, LspResponse::Error(error.clone())));
+    }
+    let result = value.get("result")?;
+    Some((id, LspResponse::Success(result.clone())))
+}
+
+fn hover_params(uri: &str, line: usize, character: usize) -> serde_json::Value {
+    json!({
+        "textDocument": { "uri": uri },
+        "position": { "line": line, "character": character }
+    })
+}
+
 fn to_file_uri(path: &Path) -> String {
     let path = if path.is_absolute() {
         path.to_path_buf()
@@ -484,6 +549,66 @@ fn truncate(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_registry_takes_response_once() {
+        let mut registry = ResponseRegistry::default();
+        registry.insert(7, LspResponse::Success(json!({"value": 1})));
+
+        assert_eq!(
+            registry.take(7),
+            Some(LspResponse::Success(json!({"value": 1})))
+        );
+        assert_eq!(registry.take(7), None);
+    }
+
+    #[test]
+    fn response_registry_evicts_oldest_response() {
+        let mut registry = ResponseRegistry::default();
+        for id in 0..=MAX_COMPLETED_RESPONSES as u64 {
+            registry.insert(id, LspResponse::Success(json!(id)));
+        }
+
+        assert_eq!(registry.take(0), None);
+        assert_eq!(
+            registry.take(MAX_COMPLETED_RESPONSES as u64),
+            Some(LspResponse::Success(json!(MAX_COMPLETED_RESPONSES)))
+        );
+    }
+
+    #[test]
+    fn parses_success_and_error_responses() {
+        assert_eq!(
+            parse_response(&json!({"id": 4, "result": {"contents": "docs"}})),
+            Some((4, LspResponse::Success(json!({"contents": "docs"}))))
+        );
+        assert_eq!(
+            parse_response(&json!({"id": 5, "error": {"code": -32603, "message": "failed"}})),
+            Some((
+                5,
+                LspResponse::Error(json!({"code": -32603, "message": "failed"}))
+            ))
+        );
+        assert_eq!(
+            parse_response(&json!({
+                "id": 6,
+                "method": "workspace/configuration",
+                "params": {}
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn hover_params_include_uri_and_utf16_position() {
+        assert_eq!(
+            hover_params("file:///tmp/main.rs", 3, 7),
+            json!({
+                "textDocument": { "uri": "file:///tmp/main.rs" },
+                "position": { "line": 3, "character": 7 }
+            })
+        );
+    }
 
     #[test]
     fn diagnostic_state_counts_severities_by_line() {

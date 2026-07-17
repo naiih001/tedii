@@ -67,6 +67,8 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("diagnostic_warning", Color::Yellow, Color::Reset),
         ("diagnostic_information", Color::Cyan, Color::Reset),
         ("diagnostic_hint", Color::DarkGray, Color::Reset),
+        ("hover_border", Color::White, Color::Reset),
+        ("hover_text", Color::White, Color::Reset),
         ("status_bar_branch", Color::Cyan, Color::Reset),
         ("gutter_diff_added", Color::Green, Color::Rgb(30, 30, 30)),
         (

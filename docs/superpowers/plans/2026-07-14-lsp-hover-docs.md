@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add nonblocking `Space K` LSP hover documentation with a reusable bounded JSON-RPC response registry, readable plain-text content, and a scrollable popup.
+**Goal:** Add nonblocking `Space k` LSP hover documentation with a reusable bounded JSON-RPC response registry, readable plain-text content, and a scrollable popup.
 
 **Architecture:** `src/lsp.rs` owns generic request-response transport and a bounded response registry. A new `src/hover.rs` owns hover parsing, Markdown normalization, and popup state. `src/editor.rs` coordinates requests and stale-response protection, while `src/main.rs` owns key dispatch and Ratatui layout.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Trigger hover only with `Space K` in Normal mode.
+- Trigger hover only with `Space k` in Normal mode.
 - Keep LSP requests asynchronous; never block the render/input loop waiting for hover.
 - Retain at most 128 completed JSON-RPC responses and evict the oldest first.
 - Only the response matching the editor's current pending hover request may update hover state.
@@ -900,7 +900,7 @@ if editor.hover.visible && key.code == KeyCode::Esc {
 Inside the existing `pending_space` Normal-mode branch, add:
 
 ```rust
-KeyCode::Char('K') => editor.request_hover(),
+KeyCode::Char('k') => editor.request_hover(),
 ```
 
 Immediately before dispatching a regular editor-mode key, capture:
@@ -931,7 +931,7 @@ Add to `default_ui()` in `src/theme.rs`:
 Add to the README feature list:
 
 ```markdown
-- LSP hover documentation with `Space K`; scroll with `Alt-j` / `Alt-k`.
+- LSP hover documentation with `Space k`; scroll with `Alt-j` / `Alt-k`.
 ```
 
 - [ ] **Step 6: Run focused and full verification**
@@ -993,7 +993,7 @@ Expected: tests and scoped Clippy pass, no whitespace errors exist, and only int
 
 Run Tedii with a configured language server and verify:
 
-1. Place the cursor on a documented symbol and press `Space K`; the popup opens without freezing input.
+1. Place the cursor on a documented symbol and press `Space k`; the popup opens without freezing input.
 2. Confirm Markdown markers and fence delimiters are absent while code and paragraphs remain readable.
 3. Use `Alt-j` and `Alt-k`; scrolling clamps at both ends.
 4. Press `Esc`; hover closes and any diagnostic popup beneath it becomes visible.

@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
-use crate::lsp::{DiagnosticSeverity, DiagnosticState, LspSession};
+use crate::hover::HoverState;
+use crate::lsp::{DiagnosticSeverity, DiagnosticState, LspResponse, LspSession};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
@@ -49,6 +50,18 @@ fn lsp_position_to_char(buffer: &Rope, line: usize, utf16_character: usize) -> u
         char_offset += 1;
     }
     line_start + char_offset
+}
+
+fn cursor_lsp_position(buffer: &Rope, cursor: usize) -> (usize, usize) {
+    let cursor = cursor.min(buffer.len_chars());
+    let line = buffer.char_to_line(cursor);
+    let line_start = buffer.line_to_char(line);
+    let utf16_character = buffer
+        .slice(line_start..cursor)
+        .chars()
+        .map(char::len_utf16)
+        .sum();
+    (line, utf16_character)
 }
 
 fn diagnostic_theme_key(severity: DiagnosticSeverity) -> &'static str {
@@ -133,6 +146,7 @@ pub struct Editor {
     pub diff_hunks: Vec<DiffHunk>,
     pub lsp_diagnostics: DiagnosticState,
     pub lsp_cursor_index: usize,
+    pub hover: HoverState,
     diff_base: Option<String>,
     git_repo: Option<GitRepo>,
     language_config: Option<Config>,
@@ -195,6 +209,7 @@ impl Editor {
             diff_hunks: Vec::new(),
             lsp_diagnostics: DiagnosticState::default(),
             lsp_cursor_index: 0,
+            hover: HoverState::default(),
             diff_base,
             git_repo,
             language_config,
@@ -227,17 +242,30 @@ impl Editor {
     }
 
     pub fn refresh_lsp(&mut self) {
+        let buffer_changed = self.buffer_version != self.last_lsp_sync_version;
+        if buffer_changed {
+            self.hover.clear();
+        }
         if let Some(session) = self.lsp_session.as_mut() {
-            if self.buffer_version != self.last_lsp_sync_version {
+            if buffer_changed {
                 session.did_change(&self.buffer.to_string());
                 self.last_lsp_sync_version = self.buffer_version;
             }
             session.poll();
+            if let Some(request_id) = self.hover.pending_request {
+                if let Some(response) = session.take_response(request_id) {
+                    if let LspResponse::Error(error) = &response {
+                        crate::lsp::log_line(format!("[editor] hover response failed: {}", error));
+                    }
+                    self.hover.apply_response(request_id, response);
+                }
+            }
             self.lsp_diagnostics = session.diagnostics.clone();
         }
     }
 
     fn restart_lsp(&mut self, path: &Path) {
+        self.hover.clear();
         self.lsp_session = None;
         self.lsp_diagnostics.clear();
         self.lsp_cursor_index = 0;
@@ -311,6 +339,11 @@ impl Editor {
         }
     }
 
+    pub fn active_diagnostic(&self) -> Option<&crate::lsp::Diagnostic> {
+        let diagnostics = self.diagnostic_on_cursor_line()?;
+        diagnostics.get(self.lsp_cursor_index % diagnostics.len())
+    }
+
     pub fn active_diagnostic_with_position(
         &self,
     ) -> Option<(&crate::lsp::Diagnostic, usize, usize)> {
@@ -330,6 +363,29 @@ impl Editor {
         }
         let len = diagnostics.len() as isize;
         self.lsp_cursor_index = ((self.lsp_cursor_index as isize + delta).rem_euclid(len)) as usize;
+    }
+
+    pub fn request_hover(&mut self) {
+        let (line, character) = cursor_lsp_position(&self.buffer, self.cursor);
+        let Some(session) = self.lsp_session.as_mut() else {
+            self.hover.clear();
+            return;
+        };
+        match session.request_hover(line, character) {
+            Ok(request_id) => self.hover.begin_request(request_id),
+            Err(error) => {
+                crate::lsp::log_line(format!("[editor] hover request failed: {}", error));
+                self.hover.clear();
+            }
+        }
+    }
+
+    pub fn dismiss_hover(&mut self) {
+        self.hover.clear();
+    }
+
+    pub fn scroll_hover(&mut self, delta: i16) {
+        self.hover.scroll_by(delta);
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -765,6 +821,7 @@ impl Editor {
     }
 
     pub fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+        self.hover.clear();
         let content = std::fs::read_to_string(path)?;
         self.buffer = Rope::from_str(&content);
         self.buffer_version = self.buffer_version.wrapping_add(1);
@@ -1078,6 +1135,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hover::HoverState;
     use crate::lsp::{Diagnostic, DiagnosticSeverity};
 
     fn diagnostic(
@@ -1101,6 +1159,60 @@ mod tests {
     #[test]
     fn bare_file_name_uses_current_directory_as_lsp_root() {
         assert_eq!(lsp_root_dir(Path::new("main.ts")), Path::new("."));
+    }
+
+    #[test]
+    fn cursor_lsp_position_uses_utf16_code_units() {
+        let buffer = Rope::from_str("a😀b\n");
+
+        assert_eq!(cursor_lsp_position(&buffer, 0), (0, 0));
+        assert_eq!(cursor_lsp_position(&buffer, 1), (0, 1));
+        assert_eq!(cursor_lsp_position(&buffer, 2), (0, 3));
+        assert_eq!(cursor_lsp_position(&buffer, 3), (0, 4));
+    }
+
+    #[test]
+    fn dismiss_hover_clears_visible_and_pending_state() {
+        let mut editor = Editor::new("", None, Theme::default_theme(), None);
+        editor.hover.text = "docs".into();
+        editor.hover.visible = true;
+        editor.hover.pending_request = Some(12);
+
+        editor.dismiss_hover();
+
+        assert_eq!(editor.hover, HoverState::default());
+    }
+
+    #[test]
+    fn editing_clears_hover_before_lsp_refresh() {
+        let mut editor = Editor::new("a", None, Theme::default_theme(), None);
+        editor.hover.text = "docs".into();
+        editor.hover.visible = true;
+        editor.insert_char('b');
+
+        assert!(!editor.hover.visible);
+        assert_eq!(editor.hover.pending_request, None);
+    }
+
+    #[test]
+    fn lsp_restart_and_file_open_clear_hover() {
+        let mut editor = Editor::new("", None, Theme::default_theme(), None);
+        editor.hover.text = "docs".into();
+        editor.hover.visible = true;
+        editor.restart_lsp(Path::new("main.rs"));
+        assert_eq!(editor.hover, HoverState::default());
+
+        let path = std::env::temp_dir().join(format!(
+            "tedii-hover-{}-{}.rs",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        editor.hover.text = "docs".into();
+        editor.hover.visible = true;
+        editor.open_file(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(editor.hover, HoverState::default());
     }
 
     #[test]
