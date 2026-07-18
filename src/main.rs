@@ -382,6 +382,7 @@ fn main() -> Result<()> {
                 PopupKind::Completion => {
                     if !editor.completion.filtered_indices.is_empty() {
                         let visible_count = editor.completion.visible_count();
+                        let scroll_offset = editor.completion.scroll_offset;
                         let line_idx = editor.buffer.char_to_line(editor.cursor);
                         let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
                         let popup_x =
@@ -392,6 +393,7 @@ fn main() -> Result<()> {
                             .completion
                             .filtered_indices
                             .iter()
+                            .skip(scroll_offset)
                             .take(visible_count)
                             .map(|&i| editor.completion.items[i].label.len())
                             .max()
@@ -401,6 +403,7 @@ fn main() -> Result<()> {
                             .completion
                             .filtered_indices
                             .iter()
+                            .skip(scroll_offset)
                             .take(visible_count)
                             .filter_map(|&i| editor.completion.items[i].detail.as_ref())
                             .map(|d| d.len())
@@ -422,11 +425,12 @@ fn main() -> Result<()> {
                             .completion
                             .filtered_indices
                             .iter()
+                            .skip(scroll_offset)
                             .take(visible_count)
                             .enumerate()
                         {
                             let item = &editor.completion.items[item_idx];
-                            let is_selected = view_idx == editor.completion.selected;
+                            let is_selected = scroll_offset + view_idx == editor.completion.selected;
                             let label_display: String = item.label.chars().take(inner_width).collect();
                             let detail_display: String = item
                                 .detail

@@ -11,6 +11,7 @@ pub struct CompletionState {
     pub trigger_offset: usize,
     pub prefix: String,
     pub filtered_indices: Vec<usize>,
+    pub scroll_offset: usize,
 }
 
 impl CompletionState {
@@ -38,6 +39,7 @@ impl CompletionState {
                 self.items = items;
                 self.filtered_indices = (0..self.items.len()).collect();
                 self.selected = preselect_idx;
+                self.scroll_offset = 0;
                 self.visible = true;
                 true
             }
@@ -62,6 +64,7 @@ impl CompletionState {
             return;
         }
         self.selected = (self.selected + 1) % self.filtered_indices.len();
+        self.ensure_selected_visible();
     }
 
     pub fn select_prev(&mut self) {
@@ -73,10 +76,24 @@ impl CompletionState {
         } else {
             self.selected - 1
         };
+        self.ensure_selected_visible();
+    }
+
+    fn ensure_selected_visible(&mut self) {
+        let visible = self.visible_count();
+        if visible == 0 {
+            return;
+        }
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        } else if self.selected >= self.scroll_offset + visible {
+            self.scroll_offset = self.selected + 1 - visible;
+        }
     }
 
     pub fn filter(&mut self, prefix: &str) {
         self.prefix = prefix.to_string();
+        self.scroll_offset = 0;
         let prefix_lower = prefix.to_lowercase();
         self.filtered_indices.clear();
         for (i, item) in self.items.iter().enumerate() {
@@ -287,5 +304,61 @@ mod tests {
 
         let item3 = make_item("label");
         assert_eq!(completion_insert_text(&item3), "label");
+    }
+
+    #[test]
+    fn scroll_offset_advances_when_selecting_past_visible_window() {
+        let mut state = CompletionState::default();
+        state.items = (0..15).map(|i| make_item(&format!("item_{i}"))).collect();
+        state.filtered_indices = (0..15).collect();
+        state.visible = true;
+        state.selected = 0;
+        state.scroll_offset = 0;
+
+        for _ in 0..10 {
+            state.select_next();
+        }
+        assert_eq!(state.selected, 10);
+        assert_eq!(state.scroll_offset, 1);
+    }
+
+    #[test]
+    fn scroll_offset_resets_when_wrapping_to_top() {
+        let mut state = CompletionState::default();
+        state.items = (0..15).map(|i| make_item(&format!("item_{i}"))).collect();
+        state.filtered_indices = (0..15).collect();
+        state.visible = true;
+        state.selected = 0;
+        state.scroll_offset = 0;
+
+        for _ in 0..10 {
+            state.select_next();
+        }
+        assert_eq!(state.scroll_offset, 1);
+        state.select_next();
+        assert_eq!(state.selected, 11);
+        assert_eq!(state.scroll_offset, 2);
+
+        state.select_prev();
+        assert_eq!(state.selected, 10);
+        assert_eq!(state.scroll_offset, 2);
+
+        state.selected = 14;
+        state.scroll_offset = 5;
+        state.select_next();
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn scroll_offset_resets_on_filter() {
+        let mut state = CompletionState::default();
+        state.items = (0..15).map(|i| make_item(&format!("item_{i}"))).collect();
+        state.filtered_indices = (0..15).collect();
+        state.visible = true;
+        state.scroll_offset = 5;
+
+        state.filter("item_1");
+        assert_eq!(state.scroll_offset, 0);
     }
 }
