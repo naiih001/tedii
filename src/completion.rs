@@ -108,7 +108,7 @@ impl CompletionState {
                 scored.push((i, score));
             }
         }
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         self.filtered_indices = scored.into_iter().map(|(i, _)| i).collect();
         if self.filtered_indices.is_empty() {
             self.visible = false;
@@ -198,6 +198,7 @@ mod tests {
             text_edit_range: None,
             text_edit_new_text: None,
             preselect: false,
+            original_index: 0,
         }
     }
 

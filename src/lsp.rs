@@ -23,6 +23,7 @@ pub struct CompletionItem {
     pub text_edit_range: Option<(usize, usize, usize, usize)>,
     pub text_edit_new_text: Option<String>,
     pub preselect: bool,
+    pub original_index: usize,
 }
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -616,12 +617,15 @@ pub fn parse_completion_response(response: LspResponse) -> Result<Vec<Completion
             text_edit_range,
             text_edit_new_text,
             preselect,
+            original_index: items.len(),
         });
     }
     items.sort_by(|a, b| {
-        let a_key = a.filter_text.as_deref().unwrap_or(&a.label).to_lowercase();
-        let b_key = b.filter_text.as_deref().unwrap_or(&b.label).to_lowercase();
-        a_key.cmp(&b_key)
+        let a_key = a.sort_text.as_deref().unwrap_or(&a.label).to_lowercase();
+        let b_key = b.sort_text.as_deref().unwrap_or(&b.label).to_lowercase();
+        a_key
+            .cmp(&b_key)
+            .then_with(|| a.original_index.cmp(&b.original_index))
     });
     Ok(items)
 }
