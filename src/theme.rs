@@ -86,6 +86,10 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("git_status_untracked", Color::DarkGray, Color::Reset),
         ("git_status_conflict", Color::LightRed, Color::Reset),
         ("git_status_renamed", Color::Cyan, Color::Reset),
+        ("completion_border", Color::White, Color::Reset),
+        ("completion_selected", Color::Black, Color::Gray),
+        ("completion_label", Color::White, Color::Reset),
+        ("completion_detail", Color::DarkGray, Color::Reset),
     ]
 }
 

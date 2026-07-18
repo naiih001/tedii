@@ -12,6 +12,19 @@ use std::time::Duration;
 
 use crate::config::LspServerConfig;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionItem {
+    pub label: String,
+    pub kind: Option<u64>,
+    pub detail: Option<String>,
+    pub insert_text: Option<String>,
+    pub sort_text: Option<String>,
+    pub filter_text: Option<String>,
+    pub text_edit_range: Option<(usize, usize, usize, usize)>,
+    pub text_edit_new_text: Option<String>,
+    pub preselect: bool,
+}
+
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_COMPLETED_RESPONSES: usize = 128;
 
@@ -220,6 +233,11 @@ impl LspSession {
                 "textDocument": {
                     "publishDiagnostics": {
                         "relatedInformation": false
+                    },
+                    "completion": {
+                        "completionItem": {
+                            "documentationFormat": ["plaintext", "markdown"]
+                        }
                     }
                 }
             },
@@ -288,6 +306,14 @@ impl LspSession {
     pub fn request_hover(&mut self, line: usize, character: usize) -> Result<u64> {
         let params = hover_params(&self.current_uri, line, character);
         self.send_request("textDocument/hover", params)
+    }
+
+    pub fn request_completion(&mut self, line: usize, character: usize) -> Result<u64> {
+        let params = json!({
+            "textDocument": { "uri": self.current_uri },
+            "position": { "line": line, "character": character }
+        });
+        self.send_request("textDocument/completion", params)
     }
 
     pub fn poll(&mut self) {
@@ -505,6 +531,100 @@ fn hover_params(uri: &str, line: usize, character: usize) -> serde_json::Value {
         "textDocument": { "uri": uri },
         "position": { "line": line, "character": character }
     })
+}
+
+pub fn parse_completion_response(response: LspResponse) -> Result<Vec<CompletionItem>, serde_json::Value> {
+    let value = match response {
+        LspResponse::Success(value) => value,
+        LspResponse::Error(error) => return Err(error),
+    };
+    let items_value = if value.is_array() {
+        value
+    } else if let Some(items) = value.get("items") {
+        items.clone()
+    } else {
+        return Ok(Vec::new());
+    };
+    let Some(items_array) = items_value.as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut items = Vec::new();
+    for item in items_array {
+        let label = item
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let kind = item.get("kind").and_then(|v| v.as_u64());
+        let detail = item
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let insert_text = item
+            .get("insertText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let sort_text = item
+            .get("sortText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let filter_text = item
+            .get("filterText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let text_edit = item.get("textEdit");
+        let (text_edit_range, text_edit_new_text) = if let Some(te) = text_edit {
+            let range = te.get("range");
+            let new_text = te
+                .get("newText")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(range) = range {
+                let start = range.get("start").cloned().unwrap_or_default();
+                let end = range.get("end").cloned().unwrap_or_default();
+                let sl = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let sc = start
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let el = end.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let ec = end
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                (Some((sl, sc, el, ec)), new_text)
+            } else {
+                (None, new_text)
+            }
+        } else {
+            (None, None)
+        };
+        let preselect = item
+            .get("preselect")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        items.push(CompletionItem {
+            label,
+            kind,
+            detail,
+            insert_text,
+            sort_text,
+            filter_text,
+            text_edit_range,
+            text_edit_new_text,
+            preselect,
+        });
+    }
+    items.sort_by(|a, b| {
+        a.sort_text
+            .as_deref()
+            .unwrap_or(&a.label)
+            .cmp(b.sort_text.as_deref().unwrap_or(&b.label))
+    });
+    Ok(items)
 }
 
 fn to_file_uri(path: &Path) -> String {

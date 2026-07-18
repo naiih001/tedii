@@ -1,3 +1,4 @@
+mod completion;
 mod config;
 mod editor;
 mod file_explorer;
@@ -44,16 +45,27 @@ enum PopupKind {
     None,
     Diagnostic,
     Hover,
+    Completion,
 }
 
-fn popup_kind(hover_visible: bool, diagnostic_present: bool) -> PopupKind {
-    if hover_visible {
+fn popup_kind(
+    completion_visible: bool,
+    hover_visible: bool,
+    diagnostic_present: bool,
+) -> PopupKind {
+    if completion_visible {
+        PopupKind::Completion
+    } else if hover_visible {
         PopupKind::Hover
     } else if diagnostic_present {
         PopupKind::Diagnostic
     } else {
         PopupKind::None
     }
+}
+
+fn is_completion_trigger(c: char) -> bool {
+    matches!(c, '.' | '(' | '[' | '{' | ',' | '>' | ':' | ' ')
 }
 
 fn cursor_changed(before: usize, after: usize) -> bool {
@@ -366,7 +378,95 @@ fn main() -> Result<()> {
                 status_chunks[1],
             );
 
-            match popup_kind(editor.hover.visible, editor.active_diagnostic().is_some()) {
+            match popup_kind(
+                editor.completion.visible,
+                editor.hover.visible,
+                editor.active_diagnostic().is_some(),
+            ) {
+                PopupKind::Completion => {
+                    if !editor.completion.filtered_indices.is_empty() {
+                        let visible_count = editor.completion.visible_count();
+                        let line_idx = editor.buffer.char_to_line(editor.cursor);
+                        let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
+                        let popup_x =
+                            content_area.x + (col_idx as u16).saturating_sub(scroll_x as u16);
+                        let popup_y =
+                            content_area.y + (line_idx as u16).saturating_sub(scroll_y as u16) + 1;
+                        let max_label_len = editor
+                            .completion
+                            .filtered_indices
+                            .iter()
+                            .take(visible_count)
+                            .map(|&i| editor.completion.items[i].label.len())
+                            .max()
+                            .unwrap_or(0)
+                            .max(4);
+                        let max_detail_len = editor
+                            .completion
+                            .filtered_indices
+                            .iter()
+                            .take(visible_count)
+                            .filter_map(|&i| editor.completion.items[i].detail.as_ref())
+                            .map(|d| d.len())
+                            .max()
+                            .unwrap_or(0);
+                        let popup_width = ((max_label_len + max_detail_len + 4) as u16)
+                            .clamp(10, content_area.width.saturating_sub(popup_x - content_area.x).max(10));
+                        let popup_height = (visible_count as u16 + 2)
+                            .clamp(3, content_area.height.saturating_sub(popup_y - content_area.y).max(3));
+                        let popup_area = ratatui::layout::Rect {
+                            x: popup_x.min(content_area.x + content_area.width.saturating_sub(1)),
+                            y: popup_y.min(content_area.y + content_area.height.saturating_sub(1)),
+                            width: popup_width,
+                            height: popup_height,
+                        };
+                        let inner_width = popup_width.saturating_sub(2) as usize;
+                        let mut lines: Vec<Line> = Vec::new();
+                        for (view_idx, &item_idx) in editor
+                            .completion
+                            .filtered_indices
+                            .iter()
+                            .take(visible_count)
+                            .enumerate()
+                        {
+                            let item = &editor.completion.items[item_idx];
+                            let is_selected = view_idx == editor.completion.selected;
+                            let label_display: String = item.label.chars().take(inner_width).collect();
+                            let detail_display: String = item
+                                .detail
+                                .as_deref()
+                                .unwrap_or("")
+                                .chars()
+                                .take(inner_width.saturating_sub(label_display.len() + 1))
+                                .collect();
+                            let mut spans = Vec::new();
+                            if is_selected {
+                                spans.push(Span::styled(
+                                    "> ",
+                                    editor.theme.ui_get("completion_selected"),
+                                ));
+                            } else {
+                                spans.push(Span::styled("  ", editor.theme.ui_get("completion_label")));
+                            }
+                            spans.push(Span::styled(
+                                label_display,
+                                editor.theme.ui_get("completion_label"),
+                            ));
+                            if !detail_display.is_empty() {
+                                spans.push(Span::styled(
+                                    format!(" {}", detail_display),
+                                    editor.theme.ui_get("completion_detail"),
+                                ));
+                            }
+                            lines.push(Line::from(spans));
+                        }
+                        let block = ratatui::widgets::Block::bordered()
+                            .border_style(editor.theme.ui_get("completion_border"));
+                        let popup =
+                            Paragraph::new(lines).block(block);
+                        f.render_widget(popup, popup_area);
+                    }
+                }
                 PopupKind::Hover => {
                     if let Some(metrics) = hover_popup_metrics(&editor.hover.text, content_area) {
                         editor.hover.max_scroll = metrics.max_scroll;
@@ -659,18 +759,93 @@ fn main() -> Result<()> {
                                 }
                             }
                         }
-                        Mode::Insert => match key.code {
-                            KeyCode::Esc => editor.mode = Mode::Normal,
-                            KeyCode::Char(c) => editor.insert_char(c),
-                            KeyCode::Backspace => editor.delete_char(),
-                            KeyCode::Enter => editor.insert_char('\n'),
-                            KeyCode::Tab => {
-                                if !editor.split_bracket_pair_at_cursor() {
-                                    editor.insert_tab();
+                        Mode::Insert => {
+                            if editor.completion.visible {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        editor.dismiss_completion();
+                                    }
+                                    KeyCode::Enter => {
+                                        editor.accept_completion();
+                                    }
+                                    KeyCode::Tab => {
+                                        editor.completion.select_next();
+                                    }
+                                    KeyCode::BackTab => {
+                                        editor.completion.select_prev();
+                                    }
+                                    KeyCode::Up => {
+                                        editor.completion.select_prev();
+                                    }
+                                    KeyCode::Down => {
+                                        editor.completion.select_next();
+                                    }
+                                    KeyCode::Char(c) => {
+                                        editor.insert_char(c);
+                                        let line_idx = editor.buffer.char_to_line(editor.cursor);
+                                        let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
+                                        let prefix =
+                                            editor.buffer.line(line_idx).slice(..col_idx).to_string();
+                                        editor.filter_completion(&prefix);
+                                        if !editor.completion.visible
+                                            && is_completion_trigger(c)
+                                        {
+                                            editor.request_completion();
+                                        }
+                                    }
+                                    KeyCode::Backspace => {
+                                        editor.delete_char();
+                                        let line_idx = editor.buffer.char_to_line(editor.cursor);
+                                        let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
+                                        if col_idx <= editor.completion.trigger_offset
+                                            || col_idx == 0
+                                        {
+                                            editor.dismiss_completion();
+                                        } else {
+                                            let prefix = editor
+                                                .buffer
+                                                .line(line_idx)
+                                                .slice(..col_idx)
+                                                .to_string();
+                                            editor.filter_completion(&prefix);
+                                            if !editor.completion.visible {
+                                                editor.dismiss_completion();
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        editor.dismiss_completion();
+                                    }
+                                }
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc => editor.mode = Mode::Normal,
+                                    KeyCode::Char(c)
+                                        if key.modifiers == KeyModifiers::CONTROL =>
+                                    {
+                                        if c == ' ' {
+                                            editor.request_completion();
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        editor.insert_char(c);
+                                        if !editor.completion.visible
+                                            && is_completion_trigger(c)
+                                        {
+                                            editor.request_completion();
+                                        }
+                                    }
+                                    KeyCode::Backspace => editor.delete_char(),
+                                    KeyCode::Enter => editor.insert_char('\n'),
+                                    KeyCode::Tab => {
+                                        if !editor.split_bracket_pair_at_cursor() {
+                                            editor.insert_tab();
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            _ => {}
-                        },
+                        }
                         Mode::Command => match key.code {
                             KeyCode::Esc => editor.mode = Mode::Normal,
                             KeyCode::Enter => match editor.command_buffer.as_str() {
@@ -821,9 +996,10 @@ mod tests {
 
     #[test]
     fn hover_has_popup_precedence_and_cursor_changes_dismiss_it() {
-        assert_eq!(popup_kind(true, true), PopupKind::Hover);
-        assert_eq!(popup_kind(false, true), PopupKind::Diagnostic);
-        assert_eq!(popup_kind(false, false), PopupKind::None);
+        assert_eq!(popup_kind(false, true, true), PopupKind::Hover);
+        assert_eq!(popup_kind(false, false, true), PopupKind::Diagnostic);
+        assert_eq!(popup_kind(false, false, false), PopupKind::None);
+        assert_eq!(popup_kind(true, true, true), PopupKind::Completion);
         assert!(cursor_changed(4, 5));
         assert!(!cursor_changed(4, 4));
     }

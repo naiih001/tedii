@@ -1,3 +1,4 @@
+use crate::completion::{completion_insert_text, CompletionState};
 use crate::config::Config;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
 use crate::hover::HoverState;
@@ -147,6 +148,7 @@ pub struct Editor {
     pub lsp_diagnostics: DiagnosticState,
     pub lsp_cursor_index: usize,
     pub hover: HoverState,
+    pub completion: CompletionState,
     diff_base: Option<String>,
     git_repo: Option<GitRepo>,
     language_config: Option<Config>,
@@ -210,6 +212,7 @@ impl Editor {
             lsp_diagnostics: DiagnosticState::default(),
             lsp_cursor_index: 0,
             hover: HoverState::default(),
+            completion: CompletionState::default(),
             diff_base,
             git_repo,
             language_config,
@@ -260,12 +263,24 @@ impl Editor {
                     self.hover.apply_response(request_id, response);
                 }
             }
+            if let Some(request_id) = self.completion.pending_request {
+                if let Some(response) = session.take_response(request_id) {
+                    if let LspResponse::Error(error) = &response {
+                        crate::lsp::log_line(format!(
+                            "[editor] completion response failed: {}",
+                            error
+                        ));
+                    }
+                    self.completion.apply_response(request_id, response);
+                }
+            }
             self.lsp_diagnostics = session.diagnostics.clone();
         }
     }
 
     fn restart_lsp(&mut self, path: &Path) {
         self.hover.clear();
+        self.completion.clear();
         self.lsp_session = None;
         self.lsp_diagnostics.clear();
         self.lsp_cursor_index = 0;
@@ -386,6 +401,60 @@ impl Editor {
 
     pub fn scroll_hover(&mut self, delta: i16) {
         self.hover.scroll_by(delta);
+    }
+
+    pub fn request_completion(&mut self) {
+        let (line, character) = cursor_lsp_position(&self.buffer, self.cursor);
+        let trigger_offset = self.cursor;
+        let Some(session) = self.lsp_session.as_mut() else {
+            self.completion.clear();
+            return;
+        };
+        match session.request_completion(line, character) {
+            Ok(request_id) => self.completion.begin_request(request_id, trigger_offset),
+            Err(error) => {
+                crate::lsp::log_line(format!("[editor] completion request failed: {}", error));
+                self.completion.clear();
+            }
+        }
+    }
+
+    pub fn accept_completion(&mut self) -> bool {
+        let Some(item) = self.completion.active_item() else {
+            self.completion.clear();
+            return false;
+        };
+        let text = completion_insert_text(item);
+        let trigger_offset = self.completion.trigger_offset;
+        let text_edit_range = item.text_edit_range;
+        self.completion.clear();
+        self.begin_undo_group();
+        if let Some((sl, sc, el, ec)) = text_edit_range {
+            let start = lsp_position_to_char(&self.buffer, sl, sc);
+            let end = lsp_position_to_char(&self.buffer, el, ec);
+            if start <= end && end <= self.buffer.len_chars() {
+                self.buffer.remove(start..end);
+                self.buffer.insert(start, &text);
+                self.cursor = start + text.chars().count();
+            } else {
+                self.buffer.insert(trigger_offset, &text);
+                self.cursor = trigger_offset + text.chars().count();
+            }
+        } else {
+            self.buffer.insert(trigger_offset, &text);
+            self.cursor = trigger_offset + text.chars().count();
+        }
+        self.buffer_version = self.buffer_version.wrapping_add(1);
+        self.refresh_lsp();
+        true
+    }
+
+    pub fn dismiss_completion(&mut self) {
+        self.completion.clear();
+    }
+
+    pub fn filter_completion(&mut self, prefix: &str) {
+        self.completion.filter(prefix);
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -822,6 +891,7 @@ impl Editor {
 
     pub fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
         self.hover.clear();
+        self.completion.clear();
         let content = std::fs::read_to_string(path)?;
         self.buffer = Rope::from_str(&content);
         self.buffer_version = self.buffer_version.wrapping_add(1);
