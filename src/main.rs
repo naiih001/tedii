@@ -64,10 +64,6 @@ fn popup_kind(
     }
 }
 
-fn is_completion_trigger(c: char) -> bool {
-    matches!(c, '.' | '(' | '[' | '{' | ',' | '>' | ':' | ' ')
-}
-
 fn cursor_changed(before: usize, after: usize) -> bool {
     before != after
 }
@@ -787,9 +783,7 @@ fn main() -> Result<()> {
                                         let prefix =
                                             editor.buffer.line(line_idx).slice(..col_idx).to_string();
                                         editor.filter_completion(&prefix);
-                                        if !editor.completion.visible
-                                            && is_completion_trigger(c)
-                                        {
+                                        if !editor.completion.visible {
                                             editor.request_completion();
                                         }
                                     }
@@ -830,7 +824,7 @@ fn main() -> Result<()> {
                                     KeyCode::Char(c) => {
                                         editor.insert_char(c);
                                         if !editor.completion.visible
-                                            && is_completion_trigger(c)
+                                            && (c.is_alphanumeric() || c == '_')
                                         {
                                             editor.request_completion();
                                         }
