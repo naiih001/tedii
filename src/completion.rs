@@ -1,3 +1,4 @@
+use crate::fuzzy::fuzzy_score;
 use crate::lsp::{parse_completion_response, CompletionItem, LspResponse};
 
 pub const MAX_VISIBLE_ITEMS: usize = 10;
@@ -94,17 +95,21 @@ impl CompletionState {
     pub fn filter(&mut self, prefix: &str) {
         self.prefix = prefix.to_string();
         self.scroll_offset = 0;
-        let prefix_lower = prefix.to_lowercase();
-        self.filtered_indices.clear();
+        if prefix.is_empty() {
+            self.filtered_indices = (0..self.items.len()).collect();
+            let preselect_idx = self.items.iter().position(|item| item.preselect);
+            self.selected = preselect_idx.unwrap_or(0);
+            return;
+        }
+        let mut scored: Vec<(usize, i64)> = Vec::new();
         for (i, item) in self.items.iter().enumerate() {
-            let match_text = item
-                .filter_text
-                .as_deref()
-                .unwrap_or(&item.label);
-            if match_text.to_lowercase().starts_with(&prefix_lower) {
-                self.filtered_indices.push(i);
+            let match_text = item.filter_text.as_deref().unwrap_or(&item.label);
+            if let Some((score, _)) = fuzzy_score(prefix, match_text) {
+                scored.push((i, score));
             }
         }
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        self.filtered_indices = scored.into_iter().map(|(i, _)| i).collect();
         if self.filtered_indices.is_empty() {
             self.visible = false;
             return;
@@ -242,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_reduces_items_by_prefix() {
+    fn filter_reduces_items_by_fuzzy_match() {
         let mut state = CompletionState::default();
         state.begin_request(1, 0);
         state.items = vec![
@@ -274,6 +279,69 @@ mod tests {
 
         state.filter("nonexistent");
         assert!(!state.visible);
+    }
+
+    #[test]
+    fn filter_fuzzy_matches_non_prefix() {
+        let mut state = CompletionState::default();
+        state.begin_request(1, 0);
+        state.items = vec![
+            CompletionItem {
+                filter_text: Some("foo_bar".into()),
+                ..make_item("foo_bar")
+            },
+            CompletionItem {
+                filter_text: Some("foo_baz".into()),
+                ..make_item("foo_baz")
+            },
+            CompletionItem {
+                filter_text: Some("xyz".into()),
+                ..make_item("xyz")
+            },
+        ];
+        state.visible = true;
+        state.filter("fb");
+        assert!(state.visible);
+        assert_eq!(state.filtered_indices.len(), 2);
+        let labels: Vec<&str> = state
+            .filtered_indices
+            .iter()
+            .map(|&i| state.items[i].label.as_str())
+            .collect();
+        assert!(labels.contains(&"foo_bar"));
+        assert!(labels.contains(&"foo_baz"));
+    }
+
+    #[test]
+    fn filter_sorts_by_relevance() {
+        let mut state = CompletionState::default();
+        state.begin_request(1, 0);
+        state.items = vec![
+            CompletionItem {
+                filter_text: Some("xfoob".into()),
+                ..make_item("xfoob")
+            },
+            CompletionItem {
+                filter_text: Some("foo_bar".into()),
+                ..make_item("foo_bar")
+            },
+        ];
+        state.visible = true;
+        state.filter("fb");
+        assert!(state.visible);
+        assert_eq!(state.filtered_indices.len(), 2);
+        assert_eq!(state.items[state.filtered_indices[0]].label, "foo_bar");
+    }
+
+    #[test]
+    fn filter_empty_prefix_shows_all() {
+        let mut state = CompletionState::default();
+        state.begin_request(1, 0);
+        state.items = vec![make_item("a"), make_item("b"), make_item("c")];
+        state.visible = true;
+        state.filter("");
+        assert!(state.visible);
+        assert_eq!(state.filtered_indices.len(), 3);
     }
 
     #[test]

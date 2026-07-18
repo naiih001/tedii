@@ -2,6 +2,7 @@ mod completion;
 mod config;
 mod editor;
 mod file_explorer;
+mod fuzzy;
 mod fuzzy_finder;
 mod git;
 mod git_picker;
@@ -782,10 +783,8 @@ fn main() -> Result<()> {
                                     }
                                     KeyCode::Char(c) => {
                                         editor.insert_char(c);
-                                        let line_idx = editor.buffer.char_to_line(editor.cursor);
-                                        let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
                                         let prefix =
-                                            editor.buffer.line(line_idx).slice(..col_idx).to_string();
+                                            editor.buffer.slice(editor.completion.trigger_offset..editor.cursor).to_string();
                                         editor.filter_completion(&prefix);
                                         if !editor.completion.visible {
                                             editor.request_completion();
@@ -793,17 +792,12 @@ fn main() -> Result<()> {
                                     }
                                     KeyCode::Backspace => {
                                         editor.delete_char();
-                                        let line_idx = editor.buffer.char_to_line(editor.cursor);
-                                        let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
-                                        if col_idx <= editor.completion.trigger_offset
-                                            || col_idx == 0
-                                        {
+                                        if editor.cursor < editor.completion.trigger_offset {
                                             editor.dismiss_completion();
                                         } else {
                                             let prefix = editor
                                                 .buffer
-                                                .line(line_idx)
-                                                .slice(..col_idx)
+                                                .slice(editor.completion.trigger_offset..editor.cursor)
                                                 .to_string();
                                             editor.filter_completion(&prefix);
                                             if !editor.completion.visible {

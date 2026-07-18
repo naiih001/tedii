@@ -619,10 +619,9 @@ pub fn parse_completion_response(response: LspResponse) -> Result<Vec<Completion
         });
     }
     items.sort_by(|a, b| {
-        a.sort_text
-            .as_deref()
-            .unwrap_or(&a.label)
-            .cmp(b.sort_text.as_deref().unwrap_or(&b.label))
+        let a_key = a.filter_text.as_deref().unwrap_or(&a.label).to_lowercase();
+        let b_key = b.filter_text.as_deref().unwrap_or(&b.label).to_lowercase();
+        a_key.cmp(&b_key)
     });
     Ok(items)
 }
