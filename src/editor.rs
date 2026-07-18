@@ -425,24 +425,36 @@ impl Editor {
             return false;
         };
         let text = completion_insert_text(item);
-        let trigger_offset = self.completion.trigger_offset;
         let text_edit_range = item.text_edit_range;
+        let word_start = {
+            let mut pos = self.cursor;
+            while pos > 0 {
+                let ch = self.buffer.char(pos - 1);
+                if ch.is_alphanumeric() || ch == '_' {
+                    pos -= 1;
+                } else {
+                    break;
+                }
+            }
+            pos
+        };
         self.completion.clear();
         self.begin_undo_group();
-        if let Some((sl, sc, el, ec)) = text_edit_range {
+        if let Some((sl, sc, _el, _ec)) = text_edit_range {
             let start = lsp_position_to_char(&self.buffer, sl, sc);
-            let end = lsp_position_to_char(&self.buffer, el, ec);
-            if start <= end && end <= self.buffer.len_chars() {
-                self.buffer.remove(start..end);
+            if start <= self.cursor && self.cursor <= self.buffer.len_chars() {
+                self.buffer.remove(start..self.cursor);
                 self.buffer.insert(start, &text);
                 self.cursor = start + text.chars().count();
             } else {
-                self.buffer.insert(trigger_offset, &text);
-                self.cursor = trigger_offset + text.chars().count();
+                self.buffer.remove(word_start..self.cursor);
+                self.buffer.insert(word_start, &text);
+                self.cursor = word_start + text.chars().count();
             }
         } else {
-            self.buffer.insert(trigger_offset, &text);
-            self.cursor = trigger_offset + text.chars().count();
+            self.buffer.remove(word_start..self.cursor);
+            self.buffer.insert(word_start, &text);
+            self.cursor = word_start + text.chars().count();
         }
         self.buffer_version = self.buffer_version.wrapping_add(1);
         self.refresh_lsp();
