@@ -1,19 +1,19 @@
 # Beta Roadmap
 
 ## Phase 1: MVP (Basic Editing)
-- **Buffer/Rope Implementation:** Core text storage.
-- **TUI Rendering:** Basic frame rendering.
-- **Input Handling:** Handling keyboard events.
-- **Basic Modal Editing:**
-  - Navigation (h, j, k, l).
-  - Mode switching (Normal <-> Insert).
-  - Text insertion/deletion.
+- **Buffer/Rope Implementation:** Core text storage. x
+- **TUI Rendering:** Basic frame rendering. x
+- **Input Handling:** Handling keyboard events. x
+- **Basic Modal Editing:** x
+  - Navigation (h, j, k, l). x
+  - Mode switching (Normal <-> Insert). x
+  - Text insertion/deletion. x
 
 ## Phase 2: Core Editing
-- **Syntax Highlighting:** Tree-sitter integration.
-- **LSP Diagnostics:** Show errors/warnings.
-- **Persistent State:** Undo/redo stack.
-- **File System:** Open/save/close buffers.
+- **Syntax Highlighting:** Tree-sitter integration. x
+- **LSP Diagnostics:** Show errors/warnings. x
+- **Persistent State:** Undo/redo stack. x
+- **File System:** Open/save/close buffers. x
 
 ## Phase 3: Polish & Extensibility
 - **Configuration:** TOML-based user configuration.
