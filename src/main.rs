@@ -388,8 +388,8 @@ fn main() -> Result<()> {
                         let col_idx = editor.cursor - editor.buffer.line_to_char(line_idx);
                         let popup_x =
                             content_area.x + (col_idx as u16).saturating_sub(scroll_x as u16);
-                        let popup_y =
-                            content_area.y + (line_idx as u16).saturating_sub(scroll_y as u16) + 1;
+                        let cursor_screen_y =
+                            content_area.y + (line_idx as u16).saturating_sub(scroll_y as u16);
                         let max_label_len = editor
                             .completion
                             .filtered_indices
@@ -412,8 +412,21 @@ fn main() -> Result<()> {
                             .unwrap_or(0);
                         let popup_width = ((max_label_len + max_detail_len + 4) as u16)
                             .clamp(10, content_area.width.saturating_sub(popup_x - content_area.x).max(10));
-                        let popup_height = (visible_count as u16 + 2)
-                            .clamp(3, content_area.height.saturating_sub(popup_y - content_area.y).max(3));
+                        let ideal_height = (visible_count as u16 + 2)
+                            .min(completion::MAX_VISIBLE_ITEMS as u16 + 2);
+
+                        let space_below = content_area.y + content_area.height - cursor_screen_y - 1;
+                        let space_above = cursor_screen_y - content_area.y;
+
+                        let (popup_y, popup_height) = if space_below >= ideal_height {
+                            (cursor_screen_y + 1, ideal_height)
+                        } else if space_above >= ideal_height {
+                            (cursor_screen_y - ideal_height, ideal_height)
+                        } else if space_below >= space_above {
+                            (cursor_screen_y + 1, space_below.max(3))
+                        } else {
+                            (cursor_screen_y - space_above, space_above.max(3))
+                        };
                         let popup_area = ratatui::layout::Rect {
                             x: popup_x.min(content_area.x + content_area.width.saturating_sub(1)),
                             y: popup_y.min(content_area.y + content_area.height.saturating_sub(1)),
@@ -765,6 +778,7 @@ fn main() -> Result<()> {
                                 match key.code {
                                     KeyCode::Esc => {
                                         editor.dismiss_completion();
+                                        editor.mode = Mode::Normal;
                                     }
                                     KeyCode::Enter => {
                                         editor.accept_completion();

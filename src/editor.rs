@@ -705,6 +705,17 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, c: char) {
+        if c == '\n' {
+            let indent = self.current_line_indent();
+            self.buffer.insert(self.cursor, "\n");
+            self.cursor += 1;
+            self.buffer.insert(self.cursor, &indent);
+            self.cursor += indent.chars().count();
+            self.buffer_version = self.buffer_version.wrapping_add(1);
+            self.refresh_lsp();
+            return;
+        }
+
         // Autopair: if typing an opener, insert closer too
         if let Some(close) = matching_pair(c) {
             let pair_ok = if c == close {
@@ -742,6 +753,20 @@ impl Editor {
         for _ in 0..4 {
             self.insert_char(' ');
         }
+    }
+
+    fn current_line_indent(&self) -> String {
+        let line_idx = self.buffer.char_to_line(self.cursor);
+        let line = self.buffer.line(line_idx);
+        let mut indent = String::new();
+        for ch in line.chars() {
+            if ch == ' ' || ch == '\t' {
+                indent.push(ch);
+            } else {
+                break;
+            }
+        }
+        indent
     }
 
     pub fn split_bracket_pair_at_cursor(&mut self) -> bool {
@@ -1306,6 +1331,77 @@ mod tests {
 
         assert_eq!(editor.buffer.to_string(), "    ");
         assert_eq!(editor.cursor, 4);
+    }
+
+    #[test]
+    fn insert_newline_preserves_indentation() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("    hello", None, theme, None);
+        editor.cursor = 9; // end of line
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "    hello\n    ");
+        assert_eq!(editor.cursor, 14);
+    }
+
+    #[test]
+    fn insert_newline_on_empty_line_does_nothing_extra() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("\n", None, theme, None);
+        editor.cursor = 0;
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "\n\n");
+        assert_eq!(editor.cursor, 1);
+    }
+
+    #[test]
+    fn insert_newline_on_line_with_no_indent_just_inserts_newline() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("hello", None, theme, None);
+        editor.cursor = 5;
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "hello\n");
+        assert_eq!(editor.cursor, 6);
+    }
+
+    #[test]
+    fn insert_newline_with_tab_indentation() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("\thello", None, theme, None);
+        editor.cursor = 6;
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "\thello\n\t");
+        assert_eq!(editor.cursor, 8);
+    }
+
+    #[test]
+    fn insert_newline_in_middle_of_line_copies_indent_from_current_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("    if(x) {", None, theme, None);
+        editor.cursor = 6; // middle of line
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "    if\n    (x) {");
+        assert_eq!(editor.cursor, 11);
+    }
+
+    #[test]
+    fn insert_newline_on_indent_only_line_copies_whitespace() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("        ", None, theme, None);
+        editor.cursor = 8;
+
+        editor.insert_char('\n');
+
+        assert_eq!(editor.buffer.to_string(), "        \n        ");
     }
 
     #[test]
