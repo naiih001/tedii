@@ -657,51 +657,62 @@ impl Editor {
         }
     }
 
+    fn line_selection_end(&self, line_idx: usize) -> usize {
+        let line_start = self.buffer.line_to_char(line_idx);
+        let line_len = self.buffer.line(line_idx).len_chars();
+
+        if line_len == 0 {
+            line_start
+        } else {
+            line_start + line_len - 1
+        }
+    }
+
     pub fn select_line(&mut self) {
-        let len = self.buffer.len_chars();
-        if len == 0 {
+        if self.buffer.len_chars() == 0 {
             return;
         }
 
         let line_idx = self.buffer.char_to_line(self.cursor);
-        let line = self.buffer.line(line_idx);
-        let line_len = line.len_chars();
         let line_start = self.buffer.line_to_char(line_idx);
 
         self.selection_anchor = Some(line_start);
-        self.cursor = (line_start + line_len).min(len);
+        self.cursor = self.line_selection_end(line_idx);
     }
 
     pub fn extend_selection_down(&mut self) {
-        let len = self.buffer.len_chars();
-        if len == 0 {
+        let Some((selection_start, selection_end)) = self.get_selection_range() else {
+            return;
+        };
+        if selection_start == selection_end {
             return;
         }
-        let line_idx = self.buffer.char_to_line(self.cursor);
-        let next_line = line_idx + 1;
+
+        let last_selected = selection_end - 1;
+        let next_line = self.buffer.char_to_line(last_selected) + 1;
         if next_line >= self.buffer.len_lines() {
             return;
         }
-        let next = self.buffer.line(next_line);
-        let next_len = next.len_chars();
-        let next_start = self.buffer.line_to_char(next_line);
-        self.cursor = (next_start + next_len).min(len);
+
+        self.selection_anchor = Some(selection_start);
+        self.cursor = self.line_selection_end(next_line);
     }
 
     pub fn extend_selection_up(&mut self) {
-        let len = self.buffer.len_chars();
-        if len == 0 {
+        let Some((selection_start, selection_end)) = self.get_selection_range() else {
+            return;
+        };
+        if selection_start == selection_end {
             return;
         }
-        let line_idx = self.buffer.char_to_line(self.cursor);
-        if line_idx == 0 {
+
+        let first_line = self.buffer.char_to_line(selection_start);
+        if first_line == 0 {
             return;
         }
-        let prev_line = line_idx - 1;
-        let prev = self.buffer.line(prev_line);
-        let prev_len = prev.len_chars();
-        let prev_start = self.buffer.line_to_char(prev_line);
-        self.cursor = (prev_start + prev_len).min(len);
+
+        self.selection_anchor = Some(selection_end - 1);
+        self.cursor = self.buffer.line_to_char(first_line - 1);
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -985,8 +996,19 @@ impl Editor {
             .map(|(start, end)| self.buffer.slice(start..end).to_string())
     }
 
+    fn position_linewise_paste_after_selection(&mut self, text: &str) {
+        if !text.ends_with('\n') {
+            return;
+        }
+
+        if let Some((_, selection_end)) = self.get_selection_range() {
+            self.cursor = selection_end.saturating_sub(1);
+        }
+    }
+
     pub fn yank_selection(&mut self) {
         if let Some(text) = self.get_selected_text() {
+            self.position_linewise_paste_after_selection(&text);
             self.clipboard = text;
         }
         self.exit_visual_mode();
@@ -994,6 +1016,7 @@ impl Editor {
 
     pub fn yank_selection_system(&mut self) {
         if let Some(text) = self.get_selected_text() {
+            self.position_linewise_paste_after_selection(&text);
             self.clipboard = text.clone();
             if let Ok(mut clipboard) = arboard::Clipboard::new() {
                 let _ = clipboard.set_text(text);
@@ -1060,9 +1083,20 @@ impl Editor {
         self.refresh_lsp();
     }
 
+    fn paste_text_after_selection(&mut self, text: &str) {
+        self.position_linewise_paste_after_selection(text);
+        self.exit_visual_mode();
+        self.paste_text(text);
+    }
+
     pub fn paste_clipboard(&mut self) {
         let text = self.clipboard.clone();
         self.paste_text(&text);
+    }
+
+    pub fn paste_clipboard_after_selection(&mut self) {
+        let text = self.clipboard.clone();
+        self.paste_text_after_selection(&text);
     }
 
     pub fn paste_system_clipboard(&mut self) {
@@ -1072,6 +1106,19 @@ impl Editor {
                 self.clipboard = text.clone();
                 self.paste_text(&text);
             }
+        }
+    }
+
+    pub fn paste_system_clipboard_after_selection(&mut self) {
+        let text = arboard::Clipboard::new()
+            .ok()
+            .and_then(|mut clipboard| clipboard.get_text().ok());
+
+        if let Some(text) = text {
+            self.clipboard = text.clone();
+            self.paste_text_after_selection(&text);
+        } else {
+            self.exit_visual_mode();
         }
     }
 
@@ -1572,6 +1619,114 @@ mod tests {
         assert_eq!(editor.buffer.to_string(), "ad");
         assert_eq!(editor.clipboard, "bc");
         assert_eq!(editor.cursor, 1);
+        assert_eq!(editor.selection_anchor, None);
+    }
+
+    #[test]
+    fn select_line_stops_before_first_character_of_next_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond", None, theme, None);
+        editor.cursor = 2;
+
+        editor.select_line();
+
+        assert_eq!(editor.get_selection_range(), Some((0, 6)));
+        assert_eq!(editor.get_selected_text().as_deref(), Some("first\n"));
+    }
+
+    #[test]
+    fn select_line_preserves_crlf_without_selecting_next_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\r\nsecond", None, theme, None);
+        editor.cursor = 2;
+
+        editor.select_line();
+
+        assert_eq!(editor.get_selection_range(), Some((0, 7)));
+        assert_eq!(editor.get_selected_text().as_deref(), Some("first\r\n"));
+    }
+
+    #[test]
+    fn extending_line_selection_stops_before_following_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond\nthird", None, theme, None);
+        editor.cursor = 2;
+        editor.select_line();
+
+        editor.extend_selection_down();
+
+        assert_eq!(editor.get_selection_range(), Some((0, 13)));
+        assert_eq!(editor.get_selected_text().as_deref(), Some("first\nsecond\n"));
+    }
+
+    #[test]
+    fn extending_line_selection_up_includes_only_previous_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond\nthird", None, theme, None);
+        editor.cursor = 8;
+        editor.select_line();
+
+        editor.extend_selection_up();
+
+        assert_eq!(editor.get_selection_range(), Some((0, 13)));
+        assert_eq!(editor.get_selected_text().as_deref(), Some("first\nsecond\n"));
+    }
+
+    #[test]
+    fn yanked_line_pastes_below_selected_line() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond", None, theme, None);
+        editor.cursor = 2;
+        editor.select_line();
+
+        editor.yank_selection();
+        editor.paste_clipboard();
+
+        assert_eq!(editor.buffer.to_string(), "first\nfirst\nsecond");
+    }
+
+    #[test]
+    fn upward_line_selection_pastes_below_entire_selection() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond\nthird\nfourth", None, theme, None);
+        editor.cursor = 15;
+        editor.select_line();
+        editor.extend_selection_up();
+
+        editor.yank_selection();
+        editor.paste_clipboard();
+
+        assert_eq!(
+            editor.buffer.to_string(),
+            "first\nsecond\nthird\nsecond\nthird\nfourth"
+        );
+    }
+
+    #[test]
+    fn direct_linewise_paste_inserts_below_selection_and_clears_it() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond", None, theme, None);
+        editor.cursor = 2;
+        editor.select_line();
+        editor.clipboard = "copied\n".into();
+
+        editor.paste_clipboard_after_selection();
+
+        assert_eq!(editor.buffer.to_string(), "first\ncopied\nsecond");
+        assert_eq!(editor.selection_anchor, None);
+    }
+
+    #[test]
+    fn direct_characterwise_paste_keeps_active_cursor_position() {
+        let theme = Theme::default_theme();
+        let mut editor = Editor::new("first\nsecond", None, theme, None);
+        editor.cursor = 2;
+        editor.select_line();
+        editor.clipboard = "X".into();
+
+        editor.paste_clipboard_after_selection();
+
+        assert_eq!(editor.buffer.to_string(), "firstX\nsecond");
         assert_eq!(editor.selection_anchor, None);
     }
 

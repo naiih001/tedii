@@ -940,6 +940,14 @@ fn main() -> Result<()> {
                                         editor.yank_selection_system();
                                         editor.mode = Mode::Normal;
                                     }
+                                    KeyCode::Char('p') => {
+                                        editor.paste_clipboard_after_selection();
+                                        editor.mode = Mode::Normal;
+                                    }
+                                    KeyCode::Char('P') => {
+                                        editor.paste_system_clipboard_after_selection();
+                                        editor.mode = Mode::Normal;
+                                    }
                                     KeyCode::Char('d') => {
                                         editor.delete_selection();
                                         editor.mode = Mode::Normal;
