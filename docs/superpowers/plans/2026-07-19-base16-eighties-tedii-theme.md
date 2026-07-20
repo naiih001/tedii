@@ -106,6 +106,10 @@ Replace the current theme section with the following mapping:
 "fuzzy_match"           = { fg = "#ffcc66" }
 "git_border"            = { fg = "#515151" }
 "git_query"             = { fg = "#6699cc" }
+"git_section"           = { fg = "#66cccc" }
+"git_page_text"         = { fg = "#d3d0c8" }
+"git_success"           = { fg = "#99cc99" }
+"git_error"             = { fg = "#f2777a" }
 "git_selected"          = { fg = "#393939", bg = "#d3d0c8" }
 "git_status_modified"   = { fg = "#ffcc66" }
 "git_status_added"      = { fg = "#99cc99" }
