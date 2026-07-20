@@ -1,5 +1,7 @@
 /target
 .worktrees/
+.kilo/
+improve.md
 
 
 # Added by cargo

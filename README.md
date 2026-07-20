@@ -211,9 +211,36 @@ Use the fuzzy finder to jump to files by typing part of a name.
 
 ### Git Picker
 
-Use the git picker to inspect repository changes and open changed files.
+Use the git picker to inspect and manage repository changes. `Space` `g` and
+`:git` open it whenever the current file or project is inside a Git repository,
+including when the working tree is clean.
 
-If git changes are available, `:git` opens the picker.
+Status-page keys:
+
+- `j` / `k` or arrow keys move through staged and unstaged files
+- `Space` stages an unstaged file or unstages a staged file
+- `Enter` opens the selected file
+- `c` opens a one-line commit message prompt for staged changes
+- `l` opens the recent commit log
+- `d` opens the selected file's complete `HEAD`-to-working-tree diff
+- `Esc` closes the git popup
+
+Commit prompt keys:
+
+- type a single-line commit message
+- `Enter` creates the commit
+- `Backspace` edits the message
+- `Esc` cancels and returns to status
+
+Log and diff page keys:
+
+- `j` / `k` or arrow keys scroll one line
+- `Ctrl+d` / `Ctrl+u` or `PageDown` / `PageUp` scroll one page
+- `Esc` returns to the status page
+
+Git command failures are shown inside the popup. The popup remains open after
+staging, unstaging, and committing so the refreshed repository state is
+immediately visible.
 
 ## Releases
 

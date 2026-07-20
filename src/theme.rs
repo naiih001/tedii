@@ -44,6 +44,7 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("mode_command", Color::Black, Color::Rgb(200, 200, 0)),
         ("mode_fuzzy", Color::White, Color::Rgb(150, 0, 150)),
         ("mode_visual", Color::White, Color::Rgb(100, 0, 100)),
+        ("editor_bg", Color::White, Color::Black),
         ("status_bar_filename", Color::Yellow, Color::Reset),
         (
             "status_bar_cursor_pos",
@@ -79,6 +80,10 @@ fn default_ui() -> Vec<(&'static str, Color, Color)> {
         ("gutter_diff_deleted", Color::Red, Color::Rgb(30, 30, 30)),
         ("git_border", Color::White, Color::Reset),
         ("git_query", Color::Cyan, Color::Reset),
+        ("git_section", Color::LightCyan, Color::Reset),
+        ("git_page_text", Color::White, Color::Reset),
+        ("git_success", Color::Green, Color::Reset),
+        ("git_error", Color::LightRed, Color::Reset),
         ("git_selected", Color::Black, Color::Gray),
         ("git_status_modified", Color::Yellow, Color::Reset),
         ("git_status_added", Color::Green, Color::Reset),
@@ -122,13 +127,12 @@ fn parse_modifiers(modifiers: &[String]) -> Modifier {
 
 fn color_def_to_style(def: &ColorDef) -> Style {
     let fg = parse_hex(&def.fg).unwrap_or(Color::Reset);
-    let bg = def
-        .bg
-        .as_ref()
-        .and_then(|h| parse_hex(h))
-        .unwrap_or(Color::Reset);
     let modifiers = parse_modifiers(&def.modifiers);
-    Style::default().fg(fg).bg(bg).add_modifier(modifiers)
+    let mut style = Style::default().fg(fg).add_modifier(modifiers);
+    if let Some(bg) = def.bg.as_deref().and_then(parse_hex) {
+        style = style.bg(bg);
+    }
+    style
 }
 
 impl Theme {
@@ -143,7 +147,11 @@ impl Theme {
 
         let mut ui = HashMap::new();
         for (name, fg, bg) in default_ui() {
-            ui.insert(name.to_string(), Style::default().fg(fg).bg(bg));
+            let mut style = Style::default().fg(fg);
+            if bg != Color::Reset {
+                style = style.bg(bg);
+            }
+            ui.insert(name.to_string(), style);
         }
 
         Self { scopes, ui }
@@ -174,5 +182,52 @@ impl Theme {
 
     pub fn ui_get(&self, key: &str) -> Style {
         self.ui.get(key).copied().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_style_without_background_inherits_parent_surface() {
+        let def = ColorDef {
+            fg: "#cc99cc".to_string(),
+            bg: None,
+            modifiers: Vec::new(),
+        };
+
+        let style = color_def_to_style(&def);
+
+        assert_eq!(style.fg, Some(Color::Rgb(204, 153, 204)));
+        assert_eq!(style.bg, None);
+    }
+
+    #[test]
+    fn configured_style_preserves_explicit_background() {
+        let def = ColorDef {
+            fg: "#d3d0c8".to_string(),
+            bg: Some("#515151".to_string()),
+            modifiers: vec!["italic".to_string()],
+        };
+
+        let style = color_def_to_style(&def);
+
+        assert_eq!(style.bg, Some(Color::Rgb(81, 81, 81)));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn built_in_foreground_only_styles_inherit_editor_background() {
+        let theme = Theme::default_theme();
+
+        assert_eq!(theme.ui_get("editor_bg").bg, Some(Color::Black));
+        assert_eq!(theme.ui_get("explorer_border").bg, None);
+        assert_eq!(theme.ui_get("git_status_modified").bg, None);
+        assert_eq!(theme.ui_get("completion_label").bg, None);
+        assert_eq!(
+            theme.ui_get("visual_selection").bg,
+            Some(Color::Rgb(40, 40, 140))
+        );
     }
 }

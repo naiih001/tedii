@@ -176,6 +176,7 @@ impl FileExplorer {
         let block = Block::bordered()
             .title(" File Explorer ")
             .title_alignment(Alignment::Center)
+            .style(self.theme.ui_get("editor_bg"))
             .border_style(self.theme.ui_get("explorer_border"));
         let inner = block.inner(popup_area);
         f.render_widget(block, popup_area);

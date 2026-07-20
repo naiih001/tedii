@@ -190,6 +190,7 @@ impl FuzzyFinder {
         let block = Block::bordered()
             .title(" Fuzzy Finder ")
             .title_alignment(Alignment::Center)
+            .style(self.theme.ui_get("editor_bg"))
             .border_style(self.theme.ui_get("fuzzy_border"));
         let inner = block.inner(popup_area);
         f.render_widget(block, popup_area);

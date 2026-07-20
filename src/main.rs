@@ -23,8 +23,8 @@ use crossterm::{
 use editor::{Editor, Mode};
 use file_explorer::FileExplorer;
 use fuzzy_finder::FuzzyFinder;
-use git::{DiffKind, GitRepo};
-use git_picker::GitPicker;
+use git::DiffKind;
+use git_picker::{GitPage, GitPicker};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     text::{Line, Span},
@@ -202,15 +202,15 @@ fn main() -> Result<()> {
     let mut file_explorer = FileExplorer::new(theme.clone());
     let mut fuzzy_finder = FuzzyFinder::new(theme.clone());
     let mut git_picker = GitPicker::new(theme);
-
-    fn refresh_git(git_picker: &mut GitPicker) {
-        if let Ok(cwd) = std::env::current_dir() {
-            if let Some(repo) = GitRepo::discover(&cwd) {
-                let changes = repo.status();
-                git_picker.set_entries(changes);
-            }
-        }
-    }
+    let default_git_context = start_dir
+        .clone()
+        .or_else(|| {
+            file_path
+                .as_ref()
+                .and_then(|path| path.parent().map(PathBuf::from))
+        })
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
 
     if let Some(dir) = start_dir {
         file_explorer.set_dir(dir.clone());
@@ -230,6 +230,10 @@ fn main() -> Result<()> {
 
         tui.terminal.draw(|f| {
             let area = f.area();
+            f.render_widget(
+                ratatui::widgets::Block::default().style(editor.theme.ui_get("editor_bg")),
+                area,
+            );
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -561,23 +565,58 @@ fn main() -> Result<()> {
                         _ => {}
                     }
                 } else if git_picker.visible {
-                    match key.code {
-                        KeyCode::Esc => {
-                            git_picker.visible = false;
-                            editor.mode = Mode::Normal;
-                        }
-                        KeyCode::Enter => {
-                            if let Some(path) = git_picker.enter() {
-                                if let Err(e) = editor.open_file(&path) {
-                                    eprintln!("Error opening file: {}", e);
-                                }
-                                git_picker.visible = false;
+                    match git_picker.page() {
+                        GitPage::Status => match key.code {
+                            KeyCode::Esc => {
+                                git_picker.close();
                                 editor.mode = Mode::Normal;
                             }
-                        }
-                        KeyCode::Up | KeyCode::BackTab => git_picker.navigate_up(),
-                        KeyCode::Down | KeyCode::Tab => git_picker.navigate_down(),
-                        _ => {}
+                            KeyCode::Enter => {
+                                if let Some(path) = git_picker.enter() {
+                                    if let Err(e) = editor.open_file(&path) {
+                                        eprintln!("Error opening file: {}", e);
+                                    }
+                                    editor.mode = Mode::Normal;
+                                }
+                            }
+                            KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => {
+                                git_picker.navigate_up()
+                            }
+                            KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => {
+                                git_picker.navigate_down()
+                            }
+                            KeyCode::Char(' ') => git_picker.toggle_stage(),
+                            KeyCode::Char('c') => git_picker.begin_commit(),
+                            KeyCode::Char('l') => git_picker.open_log(),
+                            KeyCode::Char('d') => git_picker.open_diff(),
+                            _ => {}
+                        },
+                        GitPage::Commit => match key.code {
+                            KeyCode::Esc => git_picker.back_to_status(),
+                            KeyCode::Enter => git_picker.submit_commit(),
+                            KeyCode::Backspace => git_picker.remove_commit_char(),
+                            KeyCode::Char(c)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                git_picker.add_commit_char(c)
+                            }
+                            _ => {}
+                        },
+                        GitPage::Log | GitPage::Diff => match key.code {
+                            KeyCode::Esc => git_picker.back_to_status(),
+                            KeyCode::Up | KeyCode::Char('k') => git_picker.scroll_page(-1),
+                            KeyCode::Down | KeyCode::Char('j') => git_picker.scroll_page(1),
+                            KeyCode::PageUp => git_picker.scroll_viewport(-1),
+                            KeyCode::PageDown => git_picker.scroll_viewport(1),
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                git_picker.scroll_viewport(-1)
+                            }
+                            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                git_picker.scroll_viewport(1)
+                            }
+                            _ => {}
+                        },
                     }
                 } else if fuzzy_finder.visible {
                     match key.code {
@@ -657,9 +696,11 @@ fn main() -> Result<()> {
                                     KeyCode::Char('g') => {
                                         file_explorer.visible = false;
                                         fuzzy_finder.visible = false;
-                                        refresh_git(&mut git_picker);
-                                        if !git_picker.is_empty() {
-                                            git_picker.visible = true;
+                                        let context = editor
+                                            .current_file
+                                            .as_deref()
+                                            .unwrap_or(&default_git_context);
+                                        if git_picker.open(context) {
                                             editor.mode = Mode::Fuzzy;
                                         }
                                     }
@@ -857,12 +898,15 @@ fn main() -> Result<()> {
                             KeyCode::Enter => match editor.command_buffer.as_str() {
                                 "q" => editor.should_quit = true,
                                 "git" => {
-                                    refresh_git(&mut git_picker);
-                                    if !git_picker.is_empty() {
-                                        git_picker.visible = true;
+                                    let context = editor
+                                        .current_file
+                                        .as_deref()
+                                        .unwrap_or(&default_git_context);
+                                    if git_picker.open(context) {
                                         editor.mode = Mode::Fuzzy;
+                                    } else {
+                                        editor.mode = Mode::Normal;
                                     }
-                                    editor.mode = Mode::Normal;
                                 }
                                 "w" => {
                                     let _ = editor.save();
