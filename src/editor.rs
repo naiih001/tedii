@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::git::{compute_diff, DiffHunk, GitRepo};
 use crate::hover::HoverState;
 use crate::lsp::{DiagnosticSeverity, DiagnosticState, LspResponse, LspSession};
+use crate::plugin::{EventKind, PluginRuntime};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
@@ -153,7 +154,7 @@ pub struct Editor {
     git_repo: Option<GitRepo>,
     language_config: Option<Config>,
     lsp_session: Option<LspSession>,
-    buffer_version: u64,
+    pub(crate) buffer_version: u64,
     saved_buffer_version: u64,
     last_lsp_sync_version: u64,
     cached_text: String,
@@ -162,6 +163,7 @@ pub struct Editor {
     cached_char_styles: Vec<Style>,
     undo_stack: Vec<(Rope, usize)>,
     redo_stack: Vec<(Rope, usize)>,
+    plugin_runtime: Option<*mut PluginRuntime>,
 }
 
 impl Editor {
@@ -226,6 +228,7 @@ impl Editor {
             cached_char_styles: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            plugin_runtime: None,
         };
 
         if let Some(path) = file_path {
@@ -241,6 +244,7 @@ impl Editor {
             self.saved_buffer_version = self.buffer_version;
             self.refresh_lsp();
         }
+        self.fire_event(EventKind::SaveFile);
         Ok(())
     }
 
@@ -716,48 +720,48 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        if c == '\n' {
-            let indent = self.current_line_indent();
-            self.buffer.insert(self.cursor, "\n");
-            self.cursor += 1;
-            self.buffer.insert(self.cursor, &indent);
-            self.cursor += indent.chars().count();
+        let changed = match c {
+            '\n' => {
+                let indent = self.current_line_indent();
+                self.buffer.insert(self.cursor, "\n");
+                self.cursor += 1;
+                self.buffer.insert(self.cursor, &indent);
+                self.cursor += indent.chars().count();
+                true
+            }
+            _ if let Some(close) = matching_pair(c) => {
+                let pair_ok = if c == close {
+                    self.should_autopair_quote()
+                } else {
+                    true
+                };
+                if pair_ok {
+                    self.buffer.insert_char(self.cursor, c);
+                    self.buffer.insert_char(self.cursor + 1, close);
+                    self.cursor += 1;
+                    true
+                } else if self.cursor < self.buffer.len_chars()
+                    && self.buffer.char(self.cursor) == c
+                {
+                    self.cursor += 1;
+                    false
+                } else {
+                    self.buffer.insert_char(self.cursor, c);
+                    self.cursor += 1;
+                    true
+                }
+            }
+            _ => {
+                self.buffer.insert_char(self.cursor, c);
+                self.cursor += 1;
+                true
+            }
+        };
+        if changed {
             self.buffer_version = self.buffer_version.wrapping_add(1);
             self.refresh_lsp();
-            return;
+            self.fire_event(EventKind::BufferChanged);
         }
-
-        // Autopair: if typing an opener, insert closer too
-        if let Some(close) = matching_pair(c) {
-            let pair_ok = if c == close {
-                self.should_autopair_quote()
-            } else {
-                true
-            };
-            if pair_ok {
-                self.buffer.insert_char(self.cursor, c);
-                self.buffer.insert_char(self.cursor + 1, close);
-                self.cursor += 1;
-                self.buffer_version = self.buffer_version.wrapping_add(1);
-                self.refresh_lsp();
-                return;
-            }
-        }
-
-        // Skip over: if typing a closer and next char matches, just advance
-        if self.cursor < self.buffer.len_chars()
-            && self.buffer.char(self.cursor) == c
-            && matching_pair(c) == Some(c)
-        {
-            self.cursor += 1;
-            return;
-        }
-
-        // Normal insert
-        self.buffer.insert_char(self.cursor, c);
-        self.cursor += 1;
-        self.buffer_version = self.buffer_version.wrapping_add(1);
-        self.refresh_lsp();
     }
 
     pub fn insert_tab(&mut self) {
@@ -819,12 +823,14 @@ impl Editor {
                     self.buffer.remove(self.cursor - 1..self.cursor + 1);
                     self.cursor -= 1;
                     self.buffer_version = self.buffer_version.wrapping_add(1);
+                    self.fire_event(EventKind::BufferChanged);
                     return;
                 }
             }
             self.buffer.remove(self.cursor - 1..self.cursor);
             self.cursor -= 1;
             self.buffer_version = self.buffer_version.wrapping_add(1);
+            self.fire_event(EventKind::BufferChanged);
         }
     }
 
@@ -972,6 +978,7 @@ impl Editor {
         self.buffer_version = self.buffer_version.wrapping_add(1);
         self.saved_buffer_version = self.buffer_version;
         self.refresh_diff();
+        self.fire_event(EventKind::OpenFile);
         Ok(())
     }
 
@@ -1268,6 +1275,18 @@ impl Editor {
             self.scroll_x = col_idx;
         } else if width > 0 && col_idx >= self.scroll_x + width {
             self.scroll_x = col_idx - width + 1;
+        }
+    }
+
+    pub fn set_plugin_runtime(&mut self, rt: *mut PluginRuntime) {
+        self.plugin_runtime = Some(rt);
+    }
+
+    pub fn fire_event(&self, kind: EventKind) {
+        if let Some(ptr) = self.plugin_runtime {
+            // SAFETY: single-threaded, RT lives for program lifetime
+            let rt = unsafe { &mut *ptr };
+            rt.fire_event(kind);
         }
     }
 

@@ -10,6 +10,7 @@ mod grammar_commands;
 mod hover;
 mod lsp;
 mod overlay;
+mod plugin;
 mod syntax;
 mod theme;
 mod tui;
@@ -200,6 +201,17 @@ fn main() -> Result<()> {
     let mut tui = Tui::new()?;
     let mut editor = Editor::new(&file_content, file_path.as_deref(), theme.clone(), language_config);
 
+    let mut plugin_runtime = plugin::PluginRuntime::new()?;
+    plugin_runtime.init_api()?;
+    plugin_runtime.register_editor(&editor)?;
+    editor.set_plugin_runtime(&mut plugin_runtime as *mut plugin::PluginRuntime);
+    let plugin_results = plugin_runtime.load_plugins();
+    for info in &plugin_results {
+        if let Some(ref err) = info.error {
+            eprintln!("[plugin] {} failed to load: {}", info.name, err);
+        }
+    }
+
     let mut file_explorer = FileExplorer::new(theme.clone());
     let mut fuzzy_finder = FuzzyFinder::new(theme.clone());
     let mut git_picker = GitPicker::new(theme);
@@ -218,6 +230,9 @@ fn main() -> Result<()> {
         fuzzy_finder.set_dir(dir);
         file_explorer.toggle();
     }
+
+    let mut prev_mode = editor.mode;
+    let mut prev_cursor = editor.cursor;
 
     while !editor.should_quit {
         editor.refresh_lsp();
@@ -359,20 +374,27 @@ fn main() -> Result<()> {
                 editor.theme.ui_get("status_bar_filename"),
             ));
             let left_text = Line::from(left_spans);
-            let right_text = Line::from(vec![
-                Span::styled(
-                    format!(" {}:{} ", line_idx + 1, col_idx + 1),
-                    editor.theme.ui_get("status_bar_cursor_pos"),
+
+            let mut right_spans: Vec<Span> = plugin_runtime
+                .render_status_items()
+                .into_iter()
+                .map(|text| {
+                    Span::styled(format!(" {} ", text), editor.theme.ui_get("status_bar_cursor_pos"))
+                })
+                .collect();
+            right_spans.push(Span::styled(
+                format!(" {}:{} ", line_idx + 1, col_idx + 1),
+                editor.theme.ui_get("status_bar_cursor_pos"),
+            ));
+            right_spans.push(Span::raw(" "));
+            right_spans.push(Span::styled(
+                format!(
+                    " E:{} W:{} ",
+                    editor.lsp_diagnostics.error_count, editor.lsp_diagnostics.warning_count
                 ),
-                Span::raw(" "),
-                Span::styled(
-                    format!(
-                        " E:{} W:{} ",
-                        editor.lsp_diagnostics.error_count, editor.lsp_diagnostics.warning_count
-                    ),
-                    editor.theme.ui_get("status_bar_cursor_pos"),
-                ),
-            ]);
+                editor.theme.ui_get("status_bar_cursor_pos"),
+            ));
+            let right_text = Line::from(right_spans);
 
             f.render_widget(Paragraph::new(left_text), status_chunks[0]);
             f.render_widget(
@@ -669,6 +691,20 @@ fn main() -> Result<()> {
                     }
 
                     let cursor_before = editor.cursor;
+
+                    // Check plugin keybindings first
+                    let mode_name = match editor.mode {
+                        Mode::Normal => "normal",
+                        Mode::Insert => "insert",
+                        Mode::Visual => "visual",
+                        _ => "",
+                    };
+                    if !mode_name.is_empty()
+                        && plugin_runtime.resolve_keybinding(mode_name, &key)
+                    {
+                        continue;
+                    }
+
                     match editor.mode {
                         Mode::Normal => {
                             if editor.pending_g {
@@ -716,14 +752,11 @@ fn main() -> Result<()> {
                                 }
                             } else if editor.pending_z {
                                 editor.pending_z = false;
-                                match key.code {
-                                    KeyCode::Char('z') => {
-                                        let term_size = tui.terminal.size().unwrap_or_default();
-                                        let viewport_height =
-                                            term_size.height.saturating_sub(1) as usize;
-                                        editor.center_cursor(viewport_height);
-                                    }
-                                    _ => {}
+                                if let KeyCode::Char('z') = key.code {
+                                    let term_size = tui.terminal.size().unwrap_or_default();
+                                    let viewport_height =
+                                        term_size.height.saturating_sub(1) as usize;
+                                    editor.center_cursor(viewport_height);
                                 }
                             } else {
                                 match key.code {
@@ -885,10 +918,9 @@ fn main() -> Result<()> {
                                     }
                                     KeyCode::Backspace => editor.delete_char(),
                                     KeyCode::Enter => editor.insert_char('\n'),
-                                    KeyCode::Tab => {
-                                        if !editor.split_bracket_pair_at_cursor() {
-                                            editor.insert_tab();
-                                        }
+                                    KeyCode::Tab
+                                        if !editor.split_bracket_pair_at_cursor() => {
+                                        editor.insert_tab();
                                     }
                                     _ => {}
                                 }
@@ -917,7 +949,10 @@ fn main() -> Result<()> {
                                     let _ = editor.save();
                                     editor.should_quit = true;
                                 }
-                                _ => editor.mode = Mode::Normal,
+                                cmd => {
+                                    plugin_runtime.execute_command(cmd);
+                                    editor.mode = Mode::Normal;
+                                }
                             },
                             KeyCode::Char(c) => editor.command_buffer.push(c),
                             KeyCode::Backspace => {
@@ -1013,7 +1048,17 @@ fn main() -> Result<()> {
             }
         }
 
+        if editor.mode != prev_mode {
+            editor.fire_event(plugin::EventKind::ModeChanged);
+            prev_mode = editor.mode;
+        }
+        if editor.cursor != prev_cursor {
+            editor.fire_event(plugin::EventKind::CursorMoved);
+            prev_cursor = editor.cursor;
+        }
+
         editor.refresh_lsp();
+        plugin_runtime.tick();
     }
 
     Tui::restore()?;
