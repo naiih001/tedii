@@ -1,13 +1,15 @@
 use crate::fuzzy::fuzzy_score;
 use crate::theme::Theme;
+use crate::overlay::{ListPopup, PopupConfig};
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
@@ -20,29 +22,45 @@ pub struct ScoredEntry {
 }
 
 pub struct FuzzyFinder {
-    pub visible: bool,
+    list: ListPopup<ScoredEntry>,
     root_dir: PathBuf,
     original_dir: PathBuf,
     all_entries: Vec<ScoredEntry>,
-    entries: Vec<ScoredEntry>,
-    selection: usize,
-    query: String,
-    scroll: usize,
     theme: Theme,
+}
+
+impl Deref for FuzzyFinder {
+    type Target = ListPopup<ScoredEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.list
+    }
+}
+
+impl DerefMut for FuzzyFinder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.list
+    }
 }
 
 impl FuzzyFinder {
     pub fn new(theme: Theme) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            visible: false,
+            list: ListPopup::new(PopupConfig {
+                title: "Fuzzy Finder".to_string(),
+                filter_label: "Query".to_string(),
+                width_pct: 0.6,
+                height_pct: 0.55,
+                min_width: 40,
+                min_height: 10,
+                wrap: true,
+                border_key: "fuzzy_border".to_string(),
+                filter_key: "fuzzy_query".to_string(),
+            }),
             root_dir: cwd.clone(),
             original_dir: cwd,
             all_entries: Vec::new(),
-            entries: Vec::new(),
-            selection: 0,
-            query: String::new(),
-            scroll: 0,
             theme,
         }
     }
@@ -53,8 +71,8 @@ impl FuzzyFinder {
     }
 
     pub fn toggle(&mut self) {
-        self.visible = !self.visible;
-        if self.visible {
+        self.list.visible = !self.list.visible;
+        if self.list.visible {
             self.refresh();
         }
     }
@@ -66,21 +84,19 @@ impl FuzzyFinder {
 
     fn refresh(&mut self) {
         self.all_entries = collect_files(&self.root_dir);
-        self.query.clear();
-        self.selection = 0;
-        self.scroll = 0;
+        self.list.reset_filter();
         self.apply_query();
     }
 
     fn apply_query(&mut self) {
-        if self.query.is_empty() {
-            self.entries = self.all_entries.clone();
+        if self.list.filter.is_empty() {
+            self.list.entries = self.all_entries.clone();
         } else {
             let mut scored: Vec<ScoredEntry> = self
                 .all_entries
                 .iter()
                 .filter_map(|e| {
-                    fuzzy_score(&self.query, &e.display).map(|(score, indices)| {
+                    fuzzy_score(&self.list.filter, &e.display).map(|(score, indices)| {
                         let mut entry = e.clone();
                         entry.score = score;
                         entry.indices = indices;
@@ -93,45 +109,29 @@ impl FuzzyFinder {
                     .cmp(&a.score)
                     .then(a.display.len().cmp(&b.display.len()))
             });
-            self.entries = scored;
+            self.list.entries = scored;
         }
-        self.selection = self.selection.min(self.entries.len().saturating_sub(1));
-        self.scroll = self.scroll.min(self.entries.len().saturating_sub(1));
-    }
-
-    pub fn navigate_up(&mut self) {
-        if self.entries.is_empty() {
-            return;
-        }
-        self.selection = if self.selection == 0 {
-            self.entries.len() - 1
-        } else {
-            self.selection - 1
-        };
-    }
-
-    pub fn navigate_down(&mut self) {
-        if self.entries.is_empty() {
-            return;
-        }
-        self.selection = if self.selection + 1 >= self.entries.len() {
-            0
-        } else {
-            self.selection + 1
-        };
+        self.list.selection = self
+            .list
+            .selection
+            .min(self.list.entries.len().saturating_sub(1));
+        self.list.scroll = self
+            .list
+            .scroll
+            .min(self.list.entries.len().saturating_sub(1));
     }
 
     pub fn enter(&mut self) -> Option<PathBuf> {
-        if self.entries.is_empty() {
+        if self.list.entries.is_empty() {
             return None;
         }
-        let entry = self.entries[self.selection].clone();
+        let entry = self.list.entries[self.list.selection].clone();
         if entry.is_dir {
             self.root_dir = entry.path;
             self.refresh();
             None
         } else {
-            self.visible = false;
+            self.list.visible = false;
             Some(entry.path)
         }
     }
@@ -150,13 +150,13 @@ impl FuzzyFinder {
         if c.is_control() {
             return;
         }
-        self.query.push(c);
+        self.list.add_filter_char(c);
         self.apply_query();
     }
 
     pub fn remove_query_char(&mut self) {
-        if !self.query.is_empty() {
-            self.query.pop();
+        if !self.list.filter.is_empty() {
+            self.list.remove_filter_char();
             self.apply_query();
         } else {
             self.go_up();
@@ -164,137 +164,61 @@ impl FuzzyFinder {
     }
 
     pub fn render(&mut self, f: &mut Frame, area: Rect) {
-        if !self.visible {
-            return;
+        self.list
+            .render_popup(f, area, &self.theme, render_scored_entry);
+    }
+}
+
+fn render_scored_entry(
+    entry: &ScoredEntry,
+    selected: bool,
+    theme: &Theme,
+    f: &mut Frame,
+    area: Rect,
+) {
+    let prefix = if selected { ">" } else { " " };
+    let suffix = if entry.is_dir { "/" } else { "" };
+    let base_style = if selected {
+        theme.ui_get("fuzzy_selected")
+    } else if entry.is_dir {
+        theme.ui_get("fuzzy_dir")
+    } else {
+        Style::default()
+    };
+
+    if !entry.indices.is_empty() {
+        let mut spans = vec![Span::styled(format!("{} ", prefix), base_style)];
+        let display_chars: Vec<char> = entry.display.chars().collect();
+        let mut last = 0;
+        for &mi in &entry.indices {
+            if mi > last {
+                spans.push(Span::styled(
+                    display_chars[last..mi].iter().collect::<String>(),
+                    base_style,
+                ));
+            }
+            spans.push(Span::styled(
+                display_chars[mi].to_string(),
+                theme.ui_get("fuzzy_match"),
+            ));
+            last = mi + 1;
         }
-
-        let popup_width = (area.width as f32 * 0.6).max(40.0) as u16;
-        let popup_height = (area.height as f32 * 0.55).max(10.0) as u16;
-
-        let vert = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(popup_height),
-            Constraint::Fill(1),
-        ])
-        .split(area);
-        let horiz = Layout::horizontal([
-            Constraint::Fill(1),
-            Constraint::Length(popup_width),
-            Constraint::Fill(1),
-        ])
-        .split(vert[1]);
-        let popup_area = horiz[1];
-
-        f.render_widget(Clear, popup_area);
-
-        let block = Block::bordered()
-            .title(" Fuzzy Finder ")
-            .title_alignment(Alignment::Center)
-            .style(self.theme.ui_get("editor_bg"))
-            .border_style(self.theme.ui_get("fuzzy_border"));
-        let inner = block.inner(popup_area);
-        f.render_widget(block, popup_area);
-
-        let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
-        let query_area = chunks[0];
-        let entries_area = chunks[1];
-
-        let visible_height = entries_area.height as usize;
-
-        if self.selection >= self.scroll + visible_height {
-            self.scroll = self.selection - visible_height + 1;
-        } else if self.selection < self.scroll {
-            self.scroll = self.selection;
+        if last < display_chars.len() {
+            spans.push(Span::styled(
+                display_chars[last..].iter().collect::<String>(),
+                base_style,
+            ));
         }
-
-        let query_text = if self.query.is_empty() {
-            " Query: ".to_string()
-        } else {
-            format!(" Query: {}", self.query)
-        };
+        if entry.is_dir {
+            spans.push(Span::styled("/", base_style));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+    } else {
+        let line = format!(" {} {}{}", prefix, entry.display, suffix);
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                query_text,
-                self.theme.ui_get("fuzzy_query"),
-            ))),
-            query_area,
+            Paragraph::new(Line::from(Span::styled(line, base_style))),
+            area,
         );
-
-        let scroll = self.scroll;
-        for i in 0..visible_height {
-            let idx = scroll + i;
-            if idx >= self.entries.len() {
-                break;
-            }
-            let entry = &self.entries[idx];
-            let selected = idx == self.selection;
-
-            let prefix = if selected { ">" } else { " " };
-            let suffix = if entry.is_dir { "/" } else { "" };
-
-            let base_style = if selected {
-                self.theme.ui_get("fuzzy_selected")
-            } else if entry.is_dir {
-                self.theme.ui_get("fuzzy_dir")
-            } else {
-                Style::default()
-            };
-
-            if !self.query.is_empty() && !entry.indices.is_empty() {
-                let mut spans = vec![
-                    if selected {
-                        Span::styled(">", base_style)
-                    } else {
-                        Span::raw(" ")
-                    },
-                    Span::raw(" "),
-                ];
-                let display_chars: Vec<char> = entry.display.chars().collect();
-                let mut last = 0;
-                for &mi in &entry.indices {
-                    if mi > last {
-                        spans.push(Span::styled(
-                            display_chars[last..mi].iter().collect::<String>(),
-                            base_style,
-                        ));
-                    }
-                    spans.push(Span::styled(
-                        display_chars[mi].to_string(),
-                        self.theme.ui_get("fuzzy_match"),
-                    ));
-                    last = mi + 1;
-                }
-                if last < display_chars.len() {
-                    spans.push(Span::styled(
-                        display_chars[last..].iter().collect::<String>(),
-                        base_style,
-                    ));
-                }
-                if entry.is_dir {
-                    spans.push(Span::styled("/", base_style));
-                }
-
-                let line_area = Rect::new(
-                    entries_area.x,
-                    entries_area.y + i as u16,
-                    entries_area.width,
-                    1,
-                );
-                f.render_widget(Paragraph::new(Line::from(spans)), line_area);
-            } else {
-                let line = format!(" {} {}{}", prefix, entry.display, suffix);
-                let line_area = Rect::new(
-                    entries_area.x,
-                    entries_area.y + i as u16,
-                    entries_area.width,
-                    1,
-                );
-                f.render_widget(
-                    Paragraph::new(Line::from(Span::styled(line, base_style))),
-                    line_area,
-                );
-            }
-        }
     }
 }
 
@@ -354,7 +278,7 @@ mod tests {
 
     fn finder_with_entries(count: usize) -> FuzzyFinder {
         let mut finder = FuzzyFinder::new(Theme::default_theme());
-        finder.entries = (0..count)
+        finder.list.entries = (0..count)
             .map(|i| ScoredEntry {
                 path: PathBuf::from(format!("file{i}")),
                 display: format!("file{i}"),

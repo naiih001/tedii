@@ -1,14 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::git::{ChangeSection, FileChange, GitRepo};
+use crate::overlay::{centered_popup, render_popup_shell, ListPopup, PopupConfig};
 use crate::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,7 @@ struct Feedback {
     is_error: bool,
 }
 
+#[derive(Debug, Clone)]
 enum StatusRow {
     Header(String),
     Entry(usize),
@@ -42,7 +44,6 @@ pub struct GitPicker {
     repo: Option<GitRepo>,
     entries: Vec<FileChange>,
     selection: usize,
-    scroll: usize,
     page: GitPage,
     page_title: String,
     page_lines: Vec<String>,
@@ -51,6 +52,8 @@ pub struct GitPicker {
     commit_message: String,
     feedback: Option<Feedback>,
     theme: Theme,
+    list: ListPopup<StatusRow>,
+    config: PopupConfig,
 }
 
 impl GitPicker {
@@ -60,7 +63,6 @@ impl GitPicker {
             repo: None,
             entries: Vec::new(),
             selection: 0,
-            scroll: 0,
             page: GitPage::Status,
             page_title: String::new(),
             page_lines: Vec::new(),
@@ -69,6 +71,28 @@ impl GitPicker {
             commit_message: String::new(),
             feedback: None,
             theme,
+            list: ListPopup::new(PopupConfig {
+                title: "Git Status".to_string(),
+                filter_label: String::new(),
+                width_pct: 0.72,
+                height_pct: 0.68,
+                min_width: 40,
+                min_height: 12,
+                wrap: false,
+                border_key: "git_border".to_string(),
+                filter_key: "git_query".to_string(),
+            }),
+            config: PopupConfig {
+                title: "Git Status".to_string(),
+                filter_label: String::new(),
+                width_pct: 0.72,
+                height_pct: 0.68,
+                min_width: 40,
+                min_height: 12,
+                wrap: false,
+                border_key: "git_border".to_string(),
+                filter_key: "git_query".to_string(),
+            },
         }
     }
 
@@ -100,14 +124,18 @@ impl GitPicker {
     }
 
     pub fn navigate_up(&mut self) {
-        if self.selection > 0 {
-            self.selection -= 1;
+        self.list
+            .navigate_up_skip(|row| !matches!(row, StatusRow::Entry(_)));
+        if let Some(idx) = self.current_entry_index() {
+            self.selection = idx;
         }
     }
 
     pub fn navigate_down(&mut self) {
-        if !self.entries.is_empty() && self.selection + 1 < self.entries.len() {
-            self.selection += 1;
+        self.list
+            .navigate_down_skip(|row| !matches!(row, StatusRow::Entry(_)));
+        if let Some(idx) = self.current_entry_index() {
+            self.selection = idx;
         }
     }
 
@@ -274,6 +302,13 @@ impl GitPicker {
         self.scroll_page(direction.saturating_mul(amount));
     }
 
+    fn current_entry_index(&self) -> Option<usize> {
+        match self.list.entries.get(self.list.selection)? {
+            StatusRow::Entry(idx) => Some(*idx),
+            _ => None,
+        }
+    }
+
     fn selected_stage_action(&self) -> Option<StageAction> {
         match self.entries.get(self.selection)?.section {
             ChangeSection::Staged => Some(StageAction::Unstage),
@@ -284,6 +319,7 @@ impl GitPicker {
     fn refresh_entries(&mut self, preferred: Option<(&Path, ChangeSection)>) {
         let Some(repo) = &self.repo else {
             self.entries.clear();
+            self.list.entries.clear();
             self.selection = 0;
             return;
         };
@@ -292,12 +328,14 @@ impl GitPicker {
                 self.entries = entries;
                 self.selection = preferred
                     .and_then(|(path, section)| {
-                        self.entries
-                            .iter()
-                            .position(|entry| entry.path == path && entry.section == section)
+                        self.entries.iter().position(|entry| {
+                            entry.path == path && entry.section == section
+                        })
                     })
-                    .unwrap_or_else(|| self.selection.min(self.entries.len().saturating_sub(1)));
-                self.scroll = 0;
+                    .unwrap_or_else(|| {
+                        self.selection.min(self.entries.len().saturating_sub(1))
+                    });
+                self.rebuild_status_rows();
             }
             Err(error) => self.set_error(error),
         }
@@ -322,18 +360,6 @@ impl GitPicker {
             .unwrap_or(path)
             .to_string_lossy()
             .into_owned()
-    }
-
-    fn status_style(&self, label: &str) -> Style {
-        match label {
-            "M" | "T" => self.theme.ui_get("git_status_modified"),
-            "A" => self.theme.ui_get("git_status_added"),
-            "?" => self.theme.ui_get("git_status_untracked"),
-            "D" => self.theme.ui_get("git_status_deleted"),
-            "R" | "C" => self.theme.ui_get("git_status_renamed"),
-            "U" => self.theme.ui_get("git_status_conflict"),
-            _ => Style::default(),
-        }
     }
 
     fn status_rows(&self) -> Vec<StatusRow> {
@@ -365,43 +391,52 @@ impl GitPicker {
         rows
     }
 
+    fn rebuild_status_rows(&mut self) {
+        self.list.entries = self.status_rows();
+        let row_pos = self
+            .list
+            .entries
+            .iter()
+            .position(|row| matches!(row, StatusRow::Entry(idx) if *idx == self.selection));
+        if let Some(pos) = row_pos {
+            self.list.selection = pos;
+        } else if let Some(first_entry) =
+            self.list
+                .entries
+                .iter()
+                .position(|row| matches!(row, StatusRow::Entry(_)))
+        {
+            self.list.selection = first_entry;
+            if let StatusRow::Entry(idx) = &self.list.entries[first_entry] {
+                self.selection = *idx;
+            }
+        } else {
+            self.list.selection = 0;
+        }
+        self.list.scroll = 0;
+    }
+
     pub fn render(&mut self, f: &mut Frame, area: Rect) {
         if !self.visible || area.width < 4 || area.height < 4 {
             return;
         }
 
-        let popup_width = ((area.width as f32 * 0.72) as u16)
-            .max(40)
-            .min(area.width.saturating_sub(2).max(1));
-        let popup_height = ((area.height as f32 * 0.68) as u16)
-            .max(12)
-            .min(area.height.saturating_sub(2).max(1));
-        let vert = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(popup_height),
-            Constraint::Fill(1),
-        ])
-        .split(area);
-        let horiz = Layout::horizontal([
-            Constraint::Fill(1),
-            Constraint::Length(popup_width),
-            Constraint::Fill(1),
-        ])
-        .split(vert[1]);
-        let popup_area = horiz[1];
+        if self.page == GitPage::Status {
+            self.rebuild_status_rows();
+        }
 
-        f.render_widget(Clear, popup_area);
-        let title = match self.page {
-            GitPage::Status | GitPage::Commit => " Git Status ".to_string(),
-            GitPage::Log | GitPage::Diff => format!(" {} ", self.page_title),
+        let render_config = PopupConfig {
+            title: match self.page {
+                GitPage::Status | GitPage::Commit => "Git Status".to_string(),
+                GitPage::Log | GitPage::Diff => self.page_title.clone(),
+            },
+            ..self.config.clone()
         };
-        let block = Block::bordered()
-            .title(title)
-            .title_alignment(Alignment::Center)
-            .style(self.theme.ui_get("editor_bg"))
-            .border_style(self.theme.ui_get("git_border"));
-        let inner = block.inner(popup_area);
-        f.render_widget(block, popup_area);
+
+        let Some(popup) = centered_popup(area, &render_config) else {
+            return;
+        };
+        render_popup_shell(f, &popup, &render_config, &self.theme);
 
         let feedback_height = u16::from(self.feedback.is_some());
         let chunks = Layout::vertical([
@@ -409,7 +444,8 @@ impl GitPicker {
             Constraint::Min(1),
             Constraint::Length(feedback_height),
         ])
-        .split(inner);
+        .split(popup.inner);
+
         let hint = match self.page {
             GitPage::Status => {
                 " Space stage/unstage  c commit  l log  d diff  Enter open  Esc close "
@@ -451,33 +487,15 @@ impl GitPicker {
     }
 
     fn render_status(&mut self, f: &mut Frame, area: Rect) {
-        let rows = self.status_rows();
-        let selected_row = rows
-            .iter()
-            .position(|row| matches!(row, StatusRow::Entry(index) if *index == self.selection));
-        let visible_height = area.height as usize;
-        if let Some(selected_row) = selected_row {
-            if selected_row >= self.scroll + visible_height {
-                self.scroll = selected_row - visible_height + 1;
-            } else if selected_row < self.scroll {
-                self.scroll = selected_row;
-            }
-        }
-        self.scroll = self.scroll.min(rows.len().saturating_sub(visible_height));
-
-        for (line, row) in rows
-            .iter()
-            .skip(self.scroll)
-            .take(visible_height)
-            .enumerate()
-        {
-            let line_area = Rect::new(area.x, area.y + line as u16, area.width, 1);
+        let entries = &self.entries;
+        let work_dir = self.repo.as_ref().map(|r| r.work_dir().to_path_buf());
+        self.list.render_entries(f, area, &self.theme, |row, selected, theme, f, line_area| {
             match row {
                 StatusRow::Header(title) => {
                     f.render_widget(
                         Paragraph::new(Line::from(Span::styled(
                             format!(" {title}"),
-                            self.theme.ui_get("git_section"),
+                            theme.ui_get("git_section"),
                         ))),
                         line_area,
                     );
@@ -486,35 +504,31 @@ impl GitPicker {
                     f.render_widget(
                         Paragraph::new(Line::from(Span::styled(
                             format!(" {text}"),
-                            self.theme.ui_get("git_page_text"),
+                            theme.ui_get("git_page_text"),
                         ))),
                         line_area,
                     );
                 }
-                StatusRow::Entry(index) => {
-                    let entry = &self.entries[*index];
-                    let selected = *index == self.selection;
+                StatusRow::Entry(idx) => {
+                    let entry = &entries[*idx];
                     let base_style = if selected {
-                        self.theme.ui_get("git_selected")
+                        theme.ui_get("git_selected")
                     } else {
                         Style::default()
                     };
                     let label = entry.label();
-                    let mut display = self.display_path(&entry.path);
-                    if let Some(original) = &entry.original_path {
-                        display = format!("{} -> {display}", self.display_path(original));
-                    }
+                    let display = entries_display_path(&work_dir, entries, idx, &entry.original_path);
                     f.render_widget(
                         Paragraph::new(Line::from(vec![
                             Span::styled(if selected { " > " } else { "   " }, base_style),
-                            Span::styled(format!("{label} "), self.status_style(label)),
+                            Span::styled(format!("{label} "), git_status_style(theme, label)),
                             Span::styled(display, base_style),
                         ])),
                         line_area,
                     );
                 }
             }
-        }
+        });
     }
 
     fn render_commit(&self, f: &mut Frame, area: Rect) {
@@ -556,6 +570,41 @@ impl GitPicker {
             }
         }
         self.theme.ui_get("git_page_text")
+    }
+}
+
+fn git_status_style(theme: &Theme, label: &str) -> Style {
+    match label {
+        "M" | "T" => theme.ui_get("git_status_modified"),
+        "A" => theme.ui_get("git_status_added"),
+        "?" => theme.ui_get("git_status_untracked"),
+        "D" => theme.ui_get("git_status_deleted"),
+        "R" | "C" => theme.ui_get("git_status_renamed"),
+        "U" => theme.ui_get("git_status_conflict"),
+        _ => Style::default(),
+    }
+}
+
+fn entries_display_path(
+    work_dir: &Option<PathBuf>,
+    entries: &[FileChange],
+    idx: &usize,
+    original_path: &Option<PathBuf>,
+) -> String {
+    fn strip_work_dir(work_dir: &Option<PathBuf>, path: &Path) -> String {
+        work_dir
+            .as_ref()
+            .and_then(|wd| path.strip_prefix(wd).ok())
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    }
+    let repo_path = &entries[*idx].path;
+    let display = strip_work_dir(work_dir, repo_path);
+    if let Some(original) = original_path {
+        format!("{} -> {display}", strip_work_dir(work_dir, original))
+    } else {
+        display
     }
 }
 
@@ -607,6 +656,7 @@ mod tests {
             change("staged.txt", ChangeSection::Staged),
             change("unstaged.txt", ChangeSection::Unstaged),
         ];
+        picker.rebuild_status_rows();
 
         assert_eq!(picker.selected_stage_action(), Some(StageAction::Unstage));
         picker.navigate_down();
@@ -663,6 +713,7 @@ mod tests {
         let mut picker = GitPicker::new(Theme::default_theme());
         picker.visible = true;
         picker.entries = vec![change("missing.txt", ChangeSection::Unstaged)];
+        picker.rebuild_status_rows();
 
         assert_eq!(picker.enter(), None);
         assert!(picker.visible);

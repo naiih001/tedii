@@ -9,6 +9,7 @@ mod git_picker;
 mod grammar_commands;
 mod hover;
 mod lsp;
+mod overlay;
 mod syntax;
 mod theme;
 mod tui;
